@@ -481,14 +481,27 @@ function attachAutocomplete(input) {
   list.hidden = true;
   wrap.appendChild(list);
   input.setAttribute('autocomplete', 'off');
-  input.setAttribute('aria-autocomplete', 'list');
+  input.setAttribute('aria-autocomplete', 'both');
+
+  // the grey "rest of the address" that shows up after what you typed.
+  // it sits behind the input (which is see-through) and lines up with the text
+  const ghost = document.createElement('div');
+  ghost.className = 'ac-ghost';
+  ghost.setAttribute('aria-hidden', 'true');
+  ghost.innerHTML = '<span class="typed"></span><span class="rest"></span>';
+  wrap.prepend(ghost);
 
   let token = null, timer = null, items = [], active = -1, seq = 0;
+  let pool = []; // what google gave us last time, reused while it still fits
+  let guess = ''; // the full address the grey text is predicting
 
-  const close = () => { list.hidden = true; items = []; active = -1; };
+  const lower = (s) => s.toLowerCase();
+  const hideGhost = () => { guess = ''; ghost.querySelector('.typed').textContent = ''; ghost.querySelector('.rest').textContent = ''; };
+  const close = () => { list.hidden = true; items = []; active = -1; hideGhost(); };
   const choose = (text) => {
     input.value = text;
     close();
+    pool = [];
     token = null; // picking one ends the session (how google bills it)
     input.dispatchEvent(new Event('change'));
   };
@@ -497,11 +510,37 @@ function attachAutocomplete(input) {
     [...list.querySelectorAll('li[data-i]')].forEach((li) => li.setAttribute('aria-selected', String(+li.dataset.i === i)));
   };
 
+  // show the dropdown + grey prediction for whatever's typed right now
+  const show = (matches) => {
+    const typed = input.value;
+    items = matches.slice(0, 5);
+    if (!items.length) { close(); return; }
+    list.innerHTML = items.map((t, i) => `<li role="option" data-i="${i}">${esc(t)}</li>`).join('') + '<li class="attr">Suggestions by Google</li>';
+    list.hidden = false;
+    active = -1;
+    // only predict when the top pick starts with exactly what they typed,
+    // the cursor is at the end, and the text isn't scrolled sideways
+    const top = items.find((t) => lower(t).startsWith(lower(typed)) && t.length > typed.length);
+    const atEnd = input.selectionStart === typed.length && input.selectionEnd === typed.length;
+    if (top && atEnd && document.activeElement === input && input.scrollWidth <= input.clientWidth) {
+      guess = top;
+      ghost.querySelector('.typed').textContent = typed;
+      ghost.querySelector('.rest').textContent = top.slice(typed.length);
+    } else {
+      hideGhost();
+    }
+  };
+
   input.addEventListener('input', () => {
     clearTimeout(timer);
     const text = input.value.trim();
-    // wait for 4+ letters and a pause so it doesn't spam requests
-    if (placesOff || text.length < 4 || !hasQuota('suggest')) { close(); return; }
+    if (placesOff || text.length < 3) { close(); return; }
+    // still typing into something we already have? just filter it, no new request
+    const stillFits = pool.filter((t) => lower(t).includes(lower(text)));
+    if (stillFits.some((t) => lower(t).startsWith(lower(input.value)))) { show(stillFits); return; }
+    show(stillFits);
+    if (!hasQuota('suggest')) return;
+    // short pause so it doesn't send a request every single letter
     timer = setTimeout(async () => {
       const mine = ++seq;
       try {
@@ -512,26 +551,33 @@ function attachAutocomplete(input) {
         if (map?.getBounds()) req.locationBias = map.getBounds();
         const { suggestions } = await AutocompleteSuggestion.fetchAutocompleteSuggestions(req);
         if (mine !== seq) return; // they kept typing, skip this one
-        items = suggestions.filter((s) => s.placePrediction).slice(0, 5).map((s) => s.placePrediction.text.toString());
-        if (!items.length) { close(); return; }
-        list.innerHTML = items.map((t, i) => `<li role="option" data-i="${i}">${esc(t)}</li>`).join('') + '<li class="attr">Suggestions by Google</li>';
-        list.hidden = false;
-        active = -1;
+        pool = suggestions.filter((s) => s.placePrediction).map((s) => s.placePrediction.text.toString());
+        if (input.value.trim() === text) show(pool);
       } catch (e) {
         placesOff = true;
         close();
         console.warn('Address suggestions are off. Enable "Places API (New)" on your key to turn them on.', e);
       }
-    }, 450);
+    }, 300);
   });
 
   input.addEventListener('keydown', (e) => {
+    // tab or right arrow takes the grey prediction
+    const atEnd = input.selectionStart === input.value.length;
+    if (guess && (e.key === 'Tab' || (e.key === 'ArrowRight' && atEnd)) && !e.shiftKey) {
+      e.preventDefault();
+      choose(guess);
+      return;
+    }
     if (list.hidden || !items.length) return;
     if (e.key === 'ArrowDown') { e.preventDefault(); highlight((active + 1) % items.length); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); highlight((active - 1 + items.length) % items.length); }
     else if (e.key === 'Enter' && active >= 0) { e.preventDefault(); choose(items[active]); }
     else if (e.key === 'Escape') close();
   });
+  // moving the cursor around (clicking, home/end) can make the prediction not fit anymore
+  input.addEventListener('keyup', (e) => { if (/Arrow|Home|End/.test(e.key) && items.length) show(items); });
+  input.addEventListener('click', () => { if (items.length) show(items); });
   // mousedown happens before blur, otherwise the click gets lost
   list.addEventListener('mousedown', (e) => {
     const li = e.target.closest('li[data-i]');

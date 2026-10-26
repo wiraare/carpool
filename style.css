@@ -114,6 +114,16 @@ a.btn {
 }
 
 .ac-wrap { position: relative; }
+/* the input is see-through so the grey prediction behind it shows */
+.ac-wrap > input { position: relative; z-index: 1; background: transparent; }
+.ac-ghost {
+  position: absolute; left: 0; right: 0; top: 0; height: calc(100% - 6px);
+  padding: 8px 10px; /* input padding + its 1px border */
+  background: #fff; border-radius: 6px;
+  white-space: pre; overflow: hidden; pointer-events: none;
+  color: transparent;
+}
+.ac-ghost .rest { color: #9ca3af; }
 .addr-row .ac-wrap { flex: 1; min-width: 0; }
 .ac-list {
   position: absolute; z-index: 10; left: 0; right: 0; top: calc(100% - 4px);
