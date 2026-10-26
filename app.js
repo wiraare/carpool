@@ -12,6 +12,8 @@ const CONFIG = window.CARPOOL_CONFIG || {};
 const builtInKey = (CONFIG.googleMapsKey || '').trim();
 const apiKey = () => builtInKey || localStorage.getItem(KEY_KEY);
 const wsdotCode = () => localStorage.getItem(WSDOT_KEY) || (CONFIG.wsdotCode || '').trim();
+// places you can find by a short name (like "tlc church"), set in config.js
+const NAMED_PLACES = Array.isArray(CONFIG.places) ? CONFIG.places : [];
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -669,13 +671,26 @@ function attachAutocomplete(input) {
   };
 
   // show the dropdown + grey prediction for whatever's typed right now
+  // named places (from config.js) matching what's typed, by name, nickname or address
+  const placeHits = (text) => NAMED_PLACES
+    .filter((p) => [p.name, ...(p.aliases || []), p.addr].some((s) => lower(s).includes(lower(text))))
+    .map((p) => p.addr);
+  const withPlaces = (text, fromGoogle) => {
+    const hits = placeHits(text);
+    return [...hits, ...fromGoogle.filter((t) => !hits.includes(t))];
+  };
+
   const show = (matches) => {
     const typed = input.value;
     items = matches.slice(0, 5);
     if (!items.length) { close(); return; }
-    list.innerHTML = items.map((t, i) => `<li role="option" data-i="${i}">${esc(t)}</li>`).join('') + '<li class="attr">Suggestions by Google</li>';
+    const named = (t) => NAMED_PLACES.find((p) => p.addr === t);
+    list.innerHTML = items.map((t, i) => `<li role="option" data-i="${i}">${named(t) ? `<b>${esc(named(t).name)}</b> · ${esc(t)}` : esc(t)}</li>`).join('')
+      + (items.some((t) => !named(t)) ? '<li class="attr">Suggestions by Google</li>' : '');
     list.hidden = false;
     active = -1;
+    // a named place on top gets picked with enter
+    if (named(items[0])) highlight(0);
     // only predict when the top pick starts with exactly what they typed,
     // the cursor is at the end, and the text isn't scrolled sideways
     const top = items.find((t) => lower(t).startsWith(lower(typed)) && t.length > typed.length);
@@ -692,11 +707,13 @@ function attachAutocomplete(input) {
   input.addEventListener('input', () => {
     clearTimeout(timer);
     const text = input.value.trim();
-    if (placesOff || text.length < 3) { close(); return; }
+    if (text.length < 2) { close(); return; }
+    // named places work from 2 letters and even if google suggestions are off
+    if (placesOff || text.length < 3) { show(placeHits(text)); return; }
     // still typing into something we already have? just filter it, no new request
     const stillFits = pool.filter((t) => lower(t).includes(lower(text)));
-    if (stillFits.some((t) => lower(t).startsWith(lower(input.value)))) { show(stillFits); return; }
-    show(stillFits);
+    if (stillFits.some((t) => lower(t).startsWith(lower(input.value)))) { show(withPlaces(text, stillFits)); return; }
+    show(withPlaces(text, stillFits));
     if (!hasQuota('suggest')) return;
     // short pause so it doesn't send a request every single letter
     timer = setTimeout(async () => {
@@ -710,7 +727,7 @@ function attachAutocomplete(input) {
         const { suggestions } = await AutocompleteSuggestion.fetchAutocompleteSuggestions(req);
         if (mine !== seq) return; // they kept typing, skip this one
         pool = suggestions.filter((s) => s.placePrediction).map((s) => s.placePrediction.text.toString());
-        if (input.value.trim() === text) show(pool);
+        if (input.value.trim() === text) show(withPlaces(text, pool));
       } catch (e) {
         placesOff = true;
         close();
