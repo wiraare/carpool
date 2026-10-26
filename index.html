@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Carpool Planner</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside id="panel">
+    <header>
+      <h1>Carpool Planner</h1>
+      <p class="sub">Add a destination and everyone coming. Drivers get the riders that cost them the least detour.</p>
+    </header>
+
+    <section id="key-section" class="card">
+      <h2>Google Maps API key</h2>
+      <p class="hint">Needs <b>Maps JavaScript API</b>, <b>Geocoding API</b> and <b>Routes API</b> enabled. Add <b>Places API (New)</b> for address suggestions. Stored only in this browser.</p>
+      <div class="row" id="key-row">
+        <input id="api-key" type="password" placeholder="AIza..." autocomplete="off">
+        <button id="save-key">Load map</button>
+      </div>
+      <p id="key-status" class="hint"></p>
+      <p id="usage" class="hint"></p>
+    </section>
+
+    <section class="card">
+      <h2>Destination</h2>
+      <input id="dest" placeholder="e.g. 1600 Amphitheatre Pkwy, Mountain View, CA">
+      <label class="hint">Arrive by (optional)
+        <input id="arrive-by" type="time">
+      </label>
+    </section>
+
+    <section class="card">
+      <h2>Driver settings</h2>
+      <label class="hint">Default car capacity (free seats for new drivers)
+        <input id="default-seats" type="number" min="1" max="8" value="3">
+      </label>
+      <label class="hint">Number of cars to use
+        <select id="cars-mode">
+          <option value="all">Every driver drives</option>
+          <option value="fewest">As few cars as possible</option>
+          <option value="max">At most…</option>
+        </select>
+      </label>
+      <label id="max-cars-wrap" class="hint" hidden>Maximum cars
+        <input id="max-cars" type="number" min="1" value="2">
+      </label>
+      <p class="hint">Drivers who aren't needed ride with someone else instead. Change a driver's seats right in the list below.</p>
+    </section>
+
+    <section class="card">
+      <h2>Traffic &amp; road alerts</h2>
+      <label class="check"><input id="live-traffic" type="checkbox"> Use live traffic for drive times</label>
+      <label class="check"><input id="show-traffic" type="checkbox"> Show traffic on the map</label>
+      <label class="hint">WSDOT access code (construction &amp; accident alerts in Washington)
+        <input id="wsdot-code" type="password" placeholder="Optional" autocomplete="off">
+      </label>
+      <p class="hint">Get a free code at <a href="https://wsdot.wa.gov/traffic/api/" target="_blank" rel="noopener">wsdot.wa.gov/traffic/api</a>. Stored only in this browser. Covers state highways only.</p>
+    </section>
+
+    <section class="card">
+      <h2>People</h2>
+      <form id="person-form">
+        <input id="p-name" placeholder="Name" required>
+        <div class="row addr-row">
+          <input id="p-addr" placeholder="Starting address" required>
+          <button type="button" id="locate" title="Fill in where you are right now">📍 Use my location</button>
+        </div>
+        <p id="locate-status" class="hint" hidden></p>
+        <div class="row">
+          <select id="p-role">
+            <option value="rider">Needs a ride</option>
+            <option value="driver">Driving</option>
+          </select>
+          <input id="p-seats" type="number" min="1" max="8" value="3" title="Free seats" hidden>
+          <button type="submit">Add</button>
+        </div>
+      </form>
+      <ul id="people"></ul>
+    </section>
+
+    <section class="card actions">
+      <button id="plan" class="primary">Plan carpools</button>
+      <button id="share">Copy share link</button>
+      <button id="clear" class="ghost">Clear all</button>
+      <p class="hint">Share the link so others can add themselves, then have them send it back (or plan from any copy).</p>
+    </section>
+
+    <section id="results"></section>
+  </aside>
+
+  <main id="map"><div class="map-placeholder">Enter your API key to load the map.</div></main>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
