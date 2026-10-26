@@ -751,6 +751,10 @@ async function geocode(address) {
   // stay in the US, otherwise "17824 33rd Pl W, WA" ends up in poland
   const { results } = await geocoder.geocode({ address, componentRestrictions: { country: 'US' } });
   if (!results.length) throw new Error(`Couldn't find "${address}"`);
+  // a whole state or county isn't a pickup spot, google does that when the city is missing
+  if (results[0].types.some((t) => ['country', 'administrative_area_level_1', 'administrative_area_level_2'].includes(t))) {
+    throw new Error(`Couldn't find "${address}" exactly (Google only got as far as ${results[0].formatted_address}). Add the city, like "Lynnwood, WA"`);
+  }
   const loc = results[0].geometry.location;
   const out = { lat: loc.lat(), lng: loc.lng(), label: results[0].formatted_address, at: Date.now() };
   geoCache.set(address, out);
