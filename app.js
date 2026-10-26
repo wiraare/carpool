@@ -459,6 +459,9 @@ async function computeRoute(origin, destination, stops, departAt = null) {
   useQuota('routes');
   const res = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
     method: 'POST',
+    // Browsers normally send only the site's origin to other sites; the key is
+    // locked to this page's full address, so send that (it's https either way).
+    referrerPolicy: 'no-referrer-when-downgrade',
     headers: {
       'Content-Type': 'application/json',
       'X-Goog-Api-Key': apiKey(),
