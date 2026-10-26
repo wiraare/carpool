@@ -486,8 +486,8 @@ function clearOverlays() {
 
 function addMarker(pos, color, glyph, title) {
   const { AdvancedMarkerElement, PinElement } = google.maps.marker;
-  const pin = new PinElement({ background: color, borderColor: '#fff', glyphColor: '#fff', glyph });
-  const m = new AdvancedMarkerElement({ map, position: pos, content: pin.element, title });
+  const pin = new PinElement({ background: color, borderColor: '#fff', glyphColor: '#fff', glyphText: glyph });
+  const m = new AdvancedMarkerElement({ map, position: pos, content: pin, title });
   overlays.push(m);
 }
 
