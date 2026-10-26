@@ -1,12 +1,13 @@
-// Carpool Planner: geocodes everyone, assigns riders to drivers by cheapest
-// detour, then asks the Google Routes API for the best pickup order per car.
+// carpool planner
+// finds everyone on the map, figures out who rides with who, then has google
+// plan the best pickup order for each car
 
 const COLORS = ['#2563eb', '#16a34a', '#ea580c', '#9333ea', '#db2777', '#0891b2', '#ca8a04', '#4b5563'];
 const STORE_KEY = 'carpool-state';
 const KEY_KEY = 'carpool-api-key';
 const WSDOT_KEY = 'carpool-wsdot-code';
 
-// Keys built into this copy of the app (config.js) win over ones typed in.
+// if there's a key in config.js use that, otherwise whatever someone typed in
 const CONFIG = window.CARPOOL_CONFIG || {};
 const builtInKey = (CONFIG.googleMapsKey || '').trim();
 const apiKey = () => builtInKey || localStorage.getItem(KEY_KEY);
@@ -19,12 +20,11 @@ const DEFAULT_SETTINGS = { defaultSeats: 3, carsMode: 'all', maxCars: 2, liveTra
 let state = { dest: '', arriveBy: '', people: [], settings: { ...DEFAULT_SETTINGS } };
 let map, geocoder, trafficLayer;
 let overlays = [];
-let located = null; // { lat, lng, addr } from the last "Use my location"
-// ---------- free-tier guard ----------
-// Google gives each API a free monthly allowance (5,000–10,000 calls). The app
-// counts its own calls and refuses to go past these limits, set well under
-// the free amounts, so it never runs into paid usage. Counts are kept per
-// browser and reset each month (Pacific time, like Google's billing).
+let located = null; // last spot from "use my location"
+// --- keeping it free ---
+// google gives every api a free amount each month (5k-10k calls). i count my
+// own calls and stop way before that so nobody gets charged. it's per browser
+// and resets on the 1st (pacific time, same as google)
 const FREE_LIMITS = { map: 8000, geocode: 8000, routes: 800, suggest: 4000, matrix: 8000 };
 const USAGE_KEY = 'carpool-usage';
 const USAGE_LABELS = { map: 'map loads', geocode: 'address lookups', routes: 'routes', suggest: 'suggestions', matrix: 'drive-time pairs' };
@@ -57,8 +57,8 @@ function renderUsage() {
     .map((k) => `${USAGE_LABELS[k]} ${u[k].toLocaleString()}/${FREE_LIMITS[k].toLocaleString()}`).join(' · ');
 }
 
-// Address lookups are kept for 30 days (the longest Google allows) so the
-// same addresses aren't looked up, and counted, on every plan.
+// remember address lookups for 30 days (google's max) so i'm not looking up
+// the same houses every time
 const GEO_KEY = 'carpool-geocache';
 const GEO_TTL = 30 * 864e5;
 const geoCache = new Map();
@@ -68,7 +68,7 @@ try {
   }
 } catch {}
 
-// ---------- state & sharing ----------
+// --- saving + share links ---
 
 function encodeState(s) {
   const bytes = new TextEncoder().encode(JSON.stringify(s));
@@ -81,12 +81,12 @@ function decodeState(str) {
   return JSON.parse(new TextDecoder().decode(bytes));
 }
 
-// The share link (#trip=…) is the whole trip. When private addresses are on,
-// whoever starts the trip (the organizer) gets a key pair: the public half
-// goes in the link, the private half stays in their browser only. Every
-// address in the link is encrypted to the public half, so only the organizer
-// can read them; anyone else with the link sees names only, but can still add
-// themselves (their own address stays readable to them in their browser).
+// the whole trip lives in the link (#trip=...).
+// with private addresses on, whoever starts the trip gets a key pair. the
+// public half goes in the link and the private half never leaves their
+// browser. addresses get locked with the public half so only the organizer
+// can read them. everyone else just sees names, but they can still add
+// themselves (and they can still see their own address)
 
 function loadState() {
   const m = location.hash.match(/^#trip=(.+)$/);
@@ -94,11 +94,11 @@ function loadState() {
   try { if (m) fromLink = decodeState(m[1]); } catch (e) { console.warn('Could not read the trip link', e); }
   try { saved = JSON.parse(localStorage.getItem(STORE_KEY)); } catch {}
   let loaded = fromLink || saved;
-  // Same trip as the one saved here (e.g. a link someone sent back): merge, so
-  // people added in different copies of the link all end up together.
+  // if it's the same trip i already have (like someone sent their link back),
+  // merge them so nobody gets lost between copies
   if (fromLink && saved && fromLink.tripId && fromLink.tripId === saved.tripId) loaded = mergeTrips(saved, fromLink);
   if (!loaded) return state;
-  // Older links have no settings block.
+  // old links don't have settings
   return { removed: [], ...loaded, settings: { ...DEFAULT_SETTINGS, ...loaded.settings } };
 }
 
@@ -108,7 +108,7 @@ function mergeTrips(saved, link) {
   for (const p of link.people || []) people.set(p.id, p);
   for (const p of saved.people || []) {
     const q = people.get(p.id);
-    // Keep the readable address we already have here.
+    // keep the address i can already read
     if (q) people.set(p.id, { ...q, ...(p.addr ? { addr: p.addr, coords: p.coords } : {}) });
     else people.set(p.id, p);
   }
@@ -122,8 +122,8 @@ function saveState() {
   return updateHash();
 }
 
-// Rewrites the address bar (= the share link), encrypting addresses first
-// when they're private. Returns once the link is up to date.
+// updates the link in the address bar. locks the addresses first if
+// they're private
 async function updateHash() {
   const mine = ++hashSeq;
   let shared = state;
@@ -139,15 +139,15 @@ async function updateHash() {
     shared = { ...state, people };
     try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch {}
   } else {
-    // Addresses this browser can't read stay encrypted.
+    // if i can't read it, leave it locked
     shared = { ...state, people: state.people.map(({ enc, encSig, ...p }) => (isLocked(p) ? { ...p, enc } : p)) };
   }
   if (mine === hashSeq) history.replaceState(null, '', '#trip=' + encodeState(shared));
 }
 
-// ---------- address privacy (Web Crypto: ECDH P-256 + AES-GCM) ----------
+// --- private addresses (web crypto, ECDH P-256 + AES-GCM) ---
 
-const TRIP_KEYS = 'carpool-tripkeys'; // tripId -> organizer's private key (JWK)
+const TRIP_KEYS = 'carpool-tripkeys'; // trip id -> organizer's private key
 const EC = { name: 'ECDH', namedCurve: 'P-256' };
 const bytesToB64 = (b) => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const b64ToBytes = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
@@ -167,8 +167,8 @@ async function startPrivateTrip() {
   localStorage.setItem(TRIP_KEYS, JSON.stringify(keys));
 }
 
-// A fresh throwaway key pair per address; the result is
-// [its public key (65 bytes) | IV (12) | AES-GCM ciphertext].
+// new throwaway key for every address. what comes out is
+// [its public key (65 bytes) | iv (12) | the locked address]
 async function encryptAddress(pubB64, value) {
   const eph = await crypto.subtle.generateKey(EC, true, ['deriveKey']);
   const pub = await crypto.subtle.importKey('raw', b64ToBytes(pubB64), EC, false, []);
@@ -188,7 +188,7 @@ async function decryptAddress(jwk, enc) {
   return JSON.parse(new TextDecoder().decode(pt));
 }
 
-// The organizer's browser unlocks every address it can.
+// organizer's browser unlocks whatever it can
 async function unlockAddresses() {
   const jwk = tripKeys()[state.tripId];
   if (!jwk) return;
@@ -203,7 +203,7 @@ async function unlockAddresses() {
   }
 }
 
-// ---------- UI ----------
+// --- the page ---
 
 function renderPeople() {
   const ul = $('people');
@@ -226,7 +226,7 @@ function renderPrivacy() {
   const on = state.settings.privateAddresses;
   const guest = on && state.pub && !isOrganizer();
   $('private').checked = on;
-  // Only the organizer can turn privacy off; anyone else couldn't read the addresses anyway.
+  // only the organizer can turn this off (nobody else can read them anyway)
   $('private').disabled = !!guest;
   $('privacy-note').textContent = !on
     ? 'Share links include everyone\'s home address.'
@@ -274,7 +274,7 @@ function bindUI() {
   if (CONFIG.wsdotCode) $('wsdot-code').placeholder = 'Built into this app';
   $('live-traffic').addEventListener('change', (e) => { s.liveTraffic = e.target.checked; saveState(); });
   $('show-traffic').addEventListener('change', (e) => { s.showTraffic = e.target.checked; saveState(); syncTrafficLayer(); });
-  // The access code is personal, so it stays in this browser and out of share links.
+  // wsdot code is personal so it stays here, never in links
   $('wsdot-code').addEventListener('change', (e) => {
     const code = e.target.value.trim();
     if (code) localStorage.setItem(WSDOT_KEY, code); else localStorage.removeItem(WSDOT_KEY);
@@ -305,7 +305,7 @@ function bindUI() {
       addr,
       role,
       seats: role === 'driver' ? Math.max(1, parseInt($('p-seats').value, 10) || 1) : 0,
-      // Keep the exact GPS point unless the address was edited afterwards.
+      // keep the exact gps spot unless they changed the address after
       ...(located && located.addr === addr ? { coords: { lat: located.lat, lng: located.lng } } : {}),
     });
     located = null;
@@ -322,7 +322,7 @@ function bindUI() {
     const id = e.target.dataset?.id;
     if (!id) return;
     state.people = state.people.filter((p) => p.id !== id);
-    // Remember the removal so merging an older link doesn't bring them back.
+    // remember who got removed so an old link doesn't add them back
     state.removed = [...(state.removed || []), id];
     saveState();
     renderPeople();
@@ -342,7 +342,7 @@ function bindUI() {
 
   $('clear').addEventListener('click', () => {
     if (!confirm('Remove the destination and everyone on the list?')) return;
-    // A new trip gets new keys (made on the next save).
+    // new trip = new keys (made on the next save)
     state = { dest: '', arriveBy: '', people: [], removed: [], settings: state.settings };
     $('dest').value = '';
     $('arrive-by').value = '';
@@ -381,8 +381,8 @@ function bindUI() {
   });
 }
 
-// Ask the browser for the device's position, then turn it into a street
-// address with the Geocoder (or plain coordinates if the map isn't loaded).
+// get the device's location and turn it into an address
+// (just coordinates if the map isn't loaded yet)
 function useMyLocation() {
   const status = $('locate-status');
   const say = (html) => { status.hidden = false; status.innerHTML = html; };
@@ -426,7 +426,7 @@ function flash(btn, text) {
   setTimeout(() => { btn.textContent = old; }, 1500);
 }
 
-// ---------- Google Maps ----------
+// --- google maps ---
 
 function loadMaps(key) {
   try {
@@ -466,8 +466,8 @@ function syncTrafficLayer() {
   trafficLayer.setMap(state.settings.showTraffic ? map : null);
 }
 
-// Address suggestions from the Places API (New). If that API isn't enabled on
-// the key, suggestions quietly switch off and typed addresses still work.
+// address suggestions while typing (places api new). if the key doesn't have
+// it, suggestions just turn off and typing still works
 let placesOff = false;
 
 function attachAutocomplete(input) {
@@ -489,7 +489,7 @@ function attachAutocomplete(input) {
   const choose = (text) => {
     input.value = text;
     close();
-    token = null; // a pick ends the billing session
+    token = null; // picking one ends the session (how google bills it)
     input.dispatchEvent(new Event('change'));
   };
   const highlight = (i) => {
@@ -500,7 +500,7 @@ function attachAutocomplete(input) {
   input.addEventListener('input', () => {
     clearTimeout(timer);
     const text = input.value.trim();
-    // Wait for a pause in typing and at least 4 letters, to keep requests low.
+    // wait for 4+ letters and a pause so it doesn't spam requests
     if (placesOff || text.length < 4 || !hasQuota('suggest')) { close(); return; }
     timer = setTimeout(async () => {
       const mine = ++seq;
@@ -511,7 +511,7 @@ function attachAutocomplete(input) {
         const req = { input: text, sessionToken: token };
         if (map?.getBounds()) req.locationBias = map.getBounds();
         const { suggestions } = await AutocompleteSuggestion.fetchAutocompleteSuggestions(req);
-        if (mine !== seq) return; // a newer keystroke won
+        if (mine !== seq) return; // they kept typing, skip this one
         items = suggestions.filter((s) => s.placePrediction).slice(0, 5).map((s) => s.placePrediction.text.toString());
         if (!items.length) { close(); return; }
         list.innerHTML = items.map((t, i) => `<li role="option" data-i="${i}">${esc(t)}</li>`).join('') + '<li class="attr">Suggestions by Google</li>';
@@ -532,7 +532,7 @@ function attachAutocomplete(input) {
     else if (e.key === 'Enter' && active >= 0) { e.preventDefault(); choose(items[active]); }
     else if (e.key === 'Escape') close();
   });
-  // mousedown fires before the input's blur, so the pick isn't lost.
+  // mousedown happens before blur, otherwise the click gets lost
   list.addEventListener('mousedown', (e) => {
     const li = e.target.closest('li[data-i]');
     e.preventDefault();
@@ -553,8 +553,8 @@ async function geocode(address) {
   return out;
 }
 
-// Google Maps URLs (https://developers.google.com/maps/documentation/urls):
-// these open the Google Maps app on phones and need no API key.
+// normal google maps links (no key needed), they open the app on phones
+// https://developers.google.com/maps/documentation/urls
 const ll = (p) => `${p.lat.toFixed(6)},${p.lng.toFixed(6)}`;
 
 function directionsUrl(origin, stops, destination) {
@@ -567,8 +567,8 @@ function placeUrl(p) {
   return 'https://www.google.com/maps/search/?' + new URLSearchParams({ api: '1', query: ll(p) });
 }
 
-// With live traffic on, Google times the trip for `departAt` (or now) using
-// current and predicted traffic, and marks slow/jammed stretches of the line.
+// with live traffic on, google times it for when you'd leave (or now) and
+// marks the slow / jammed parts
 async function computeRoute(origin, destination, stops, departAt = null) {
   const pt = (p) => ({ location: { latLng: { latitude: p.lat, longitude: p.lng } } });
   const live = state.settings.liveTraffic;
@@ -587,8 +587,8 @@ async function computeRoute(origin, destination, stops, departAt = null) {
   useQuota('routes');
   const res = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
     method: 'POST',
-    // Browsers normally send only the site's origin to other sites; the key is
-    // locked to this page's full address, so send that (it's https either way).
+    // browsers only send the site name by default but my key is locked to the
+    // full /carpool/ address, so send the whole thing
     referrerPolicy: 'no-referrer-when-downgrade',
     headers: {
       'Content-Type': 'application/json',
@@ -619,7 +619,7 @@ function addMarker(pos, color, glyph, title) {
   overlays.push(m);
 }
 
-// ---------- assignment ----------
+// --- who rides with who ---
 
 function haversine(a, b) {
   const R = 6371;
@@ -630,16 +630,16 @@ function haversine(a, b) {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
-// How the matcher measures a leg from a to b. Straight-line km by default;
-// while planning it's swapped for real drive seconds from Google (see
-// driveTimeMatrix), which matters around Puget Sound where water makes
-// straight lines badly wrong.
+// how far it is from a to b. straight line by default, but when planning it
+// gets swapped for real drive times from google (driveTimeMatrix). this
+// matters a lot around the sound, bremerton looks close to seattle but it
+// really isn't
 let travel = haversine;
 
-// Regret insertion: for each rider find the cheapest detour into every car
-// with a free seat. Seat first the rider who'd lose the most if their best
-// car filled up, so nobody gets stranded with a long detour later.
-// The Routes API reorders pickups afterwards.
+// for every rider, find the smallest detour into each car that has room.
+// whoever would lose the most if their best car filled up gets seated first,
+// so nobody's stuck with a huge detour at the end. google fixes the pickup
+// order later
 function assign(drivers, riders, dest, polish = true) {
   const cars = drivers.map((d) => ({ driver: d, riders: [] }));
   const left = [...riders];
@@ -664,7 +664,7 @@ function assign(drivers, riders, dest, polish = true) {
         pick = { ...options[0], rider, regret };
       }
     }
-    if (!pick) break; // no seats left
+    if (!pick) break; // out of seats
     pick.car.riders.splice(pick.i, 0, pick.rider);
     left.splice(left.indexOf(pick.rider), 1);
   }
@@ -672,7 +672,7 @@ function assign(drivers, riders, dest, polish = true) {
   return { cars, unassigned: left };
 }
 
-// Build a pickup order by cheapest insertion and return it with its length.
+// build a pickup order one rider at a time and say how long it is
 function orderRiders(driver, riders, dest) {
   const order = [];
   for (const r of riders) {
@@ -690,8 +690,8 @@ function orderRiders(driver, riders, dest) {
   return { order, km };
 }
 
-// Local search: keep moving a rider to another car, or swapping two riders
-// between cars, while that shortens the total driving.
+// keep trying to move a rider to another car or swap two riders, as long
+// as it cuts the total driving
 function improve(cars, dest) {
   const len = (car, riders) => orderRiders(car.driver, riders, dest).km;
   for (let pass = 0; pass < 50; pass++) {
@@ -725,8 +725,7 @@ function improve(cars, dest) {
   }
 }
 
-// Total driving across all cars, with a heavy penalty for anyone left without
-// a seat.
+// total driving for every car, plus a huge penalty for anyone left without a seat
 function score({ cars, unassigned }, dest) {
   let km = 0;
   for (const car of cars) {
@@ -736,12 +735,11 @@ function score({ cars, unassigned }, dest) {
   return km + unassigned.length * 1e6;
 }
 
-// Real drive times between every person (and from each person to the
-// destination) via Google's Route Matrix, returned as a `travel` function in
-// seconds. Returns { reason } instead when it can't be used. Plain drive
-// times without live traffic: they only decide who rides with whom, and that
-// keeps it in Google's cheapest (10,000 free a month) tier.
-const matrixCache = new Map(); // "from|to" -> seconds, for this page visit only
+// real drive times between everybody (and to the destination) from google's
+// route matrix. gives back a travel function in seconds, or { reason } if it
+// can't. no live traffic here, it's only for picking who rides with who and
+// that keeps it on the cheap tier (10k free a month)
+const matrixCache = new Map(); // "from|to" -> seconds, only while the page is open
 
 async function driveTimeMatrix(points, dest) {
   const key = (p) => `${p.lat.toFixed(6)},${p.lng.toFixed(6)}`;
@@ -751,7 +749,7 @@ async function driveTimeMatrix(points, dest) {
   for (const o of origins) for (const d of dests) if (key(o) !== key(d) && !matrixCache.has(key(o) + '|' + key(d))) missing.push([o, d]);
 
   if (missing.length) {
-    // Ask only for the rows/columns still missing, 25 × 25 per request (Google's limit).
+    // only ask for what's missing, 25 x 25 at a time (google's limit)
     const os = [...new Map(missing.map(([o]) => [key(o), o])).values()];
     const ds = [...new Map(missing.map(([, d]) => [key(d), d])).values()];
     const pairs = os.length * ds.length;
@@ -775,7 +773,7 @@ async function driveTimeMatrix(points, dest) {
         if (!res.ok) throw new Error(data.error?.message || `Route Matrix error ${res.status}`);
         for (const el of data) {
           const o = oc[el.originIndex || 0], d = dc[el.destinationIndex || 0];
-          // No road between them (an island without a ferry, say): make it very costly.
+          // no road between them (island with no ferry or whatever), make it super expensive
           matrixCache.set(key(o) + '|' + key(d), el.condition === 'ROUTE_EXISTS' ? secs(el.duration) : 1e5);
         }
       }
@@ -785,21 +783,21 @@ async function driveTimeMatrix(points, dest) {
     cost: (a, b) => {
       const ka = key(a), kb = key(b);
       if (ka === kb) return 0;
-      // Anything Google didn't answer falls back to ~1 km per minute.
+      // if google didn't answer, guess about 1 km a minute
       return matrixCache.get(ka + '|' + kb) ?? haversine(a, b) * 60;
     },
   };
 }
 
-// People that the k roomiest cars in `cars` can carry (drivers included).
+// how many people the k biggest cars can fit (drivers count)
 function topCapacity(cars, k) {
   return cars.map((d) => d.seats + 1).sort((a, b) => b - a).slice(0, k).reduce((s, c) => s + c, 0);
 }
 
-// Decide which drivers take their car. Work out how many cars to keep, then,
-// starting with everyone driving, keep sending home the car whose removal (its
-// driver becomes a rider) adds the least driving. A car is only sent home if
-// the cars left can still seat as many people as the best k cars could.
+// decide which drivers actually take their car. figure out how many cars to
+// keep, then start with everyone driving and keep leaving home whichever car
+// adds the least driving when its driver rides instead. only leave a car home
+// if the rest can still fit as many people as the best k cars could
 function planCars(drivers, riders, dest, settings) {
   const total = drivers.length + riders.length;
   let target = drivers.length;
@@ -813,7 +811,7 @@ function planCars(drivers, riders, dest, settings) {
 
   let active = [...drivers];
   const parked = [];
-  // Trials skip the local search for speed; the final plan gets it.
+  // skip the swapping step while trying options (slow), do it once at the end
   let current = assign(active, riders, dest, false);
   while (active.length > target) {
     let best = null;
@@ -832,9 +830,9 @@ function planCars(drivers, riders, dest, settings) {
   return { ...current, parked };
 }
 
-// ---------- WSDOT highway alerts ----------
-// https://wsdot.wa.gov/traffic/api/ — their server doesn't allow normal
-// cross-site requests, but it supports JSONP via a `callback` parameter.
+// --- wsdot highway alerts ---
+// https://wsdot.wa.gov/traffic/api/
+// their server blocks normal requests from other sites but jsonp works
 
 let wsdotCache = null; // { at, alerts }
 
@@ -871,7 +869,7 @@ async function fetchWsdotAlerts(code) {
   return alerts;
 }
 
-// A full closure, not just a lane or shoulder ("right lane closed").
+// actually closed, not just one lane ("right lane closed" doesn't count)
 const isClosure = (a) => /clos/i.test(a.category)
   || /road (is )?closed|all lanes (are )?(closed|blocked)|closed in both directions|fully closed/i.test(a.headline);
 
@@ -883,8 +881,8 @@ function alertIcon(a) {
   return '⚠️';
 }
 
-// Shortest distance (km) from point p to segment a–b, on a flat projection
-// around p (fine at highway scales).
+// closest distance (km) from a point to a piece of road. treats the earth as
+// flat which is fine at this size
 function segDistKm(p, a, b) {
   const kx = 111.32 * Math.cos((p.lat * Math.PI) / 180), ky = 110.57;
   const ax = (a.lng - p.lng) * kx, ay = (a.lat - p.lat) * ky;
@@ -895,7 +893,7 @@ function segDistKm(p, a, b) {
   return Math.hypot(ax + t * dx, ay + t * dy);
 }
 
-// Alerts whose start or end point lies within `km` of the route line.
+// alerts that start or end close to the route
 function alertsNear(path, alerts, km = 0.4) {
   if (path.length < 2) return [];
   const pad = km / 100;
@@ -908,7 +906,7 @@ function alertsNear(path, alerts, km = 0.4) {
   }));
 }
 
-// ---------- planning ----------
+// --- planning ---
 
 const secs = (d) => parseInt(d, 10) || 0;
 const fmtDur = (s) => { const m = Math.round(s / 60); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; };
@@ -938,7 +936,7 @@ async function plan() {
     const located = await Promise.all(state.people.map(async (p) => ({ ...p, pos: p.coords || await geocode(p.addr) })));
     const byId = Object.fromEntries(located.map((p) => [p.id, p]));
 
-    // Match on real drive times when we can, straight lines otherwise.
+    // use real drive times if we can, straight lines if not
     let matchedBy = 'straight-line distance';
     if (state.settings.realDriveTimes) {
       try {
@@ -958,7 +956,7 @@ async function plan() {
     const { cars, unassigned, parked } = result;
     const parkedIds = new Set(parked.map((d) => d.id));
 
-    // Arrival target: today at that time, or tomorrow if it's already passed.
+    // arrive time is today, or tomorrow if it already passed
     let arrive = null;
     if (state.arriveBy) {
       const [h, m] = state.arriveBy.split(':').map(Number);
@@ -967,8 +965,8 @@ async function plan() {
       if (arrive < Date.now()) arrive.setDate(arrive.getDate() + 1);
     }
 
-    // With live traffic and an arrival time, re-time each route for when the
-    // driver would actually leave, so predicted rush-hour traffic counts.
+    // with live traffic + an arrive time, redo each route for when the driver
+    // would really leave so rush hour actually counts
     const routeFor = async (c) => {
       const stops = c.riders.map((r) => r.pos);
       const first = await computeRoute(c.driver.pos, dest, stops);
@@ -976,9 +974,9 @@ async function plan() {
       const depart = new Date(+arrive - secs(first.duration) * 1000);
       return depart > Date.now() + 60000 ? computeRoute(c.driver.pos, dest, stops, depart) : first;
     };
-    // Check up front so a plan never stops halfway through its cars.
+    // check first so it never runs out halfway through
     const routeCalls = cars.length * (arrive && state.settings.liveTraffic ? 2 : 1);
-    if (!hasQuota('routes', routeCalls)) useQuota('routes', routeCalls); // throws the "limit reached" message
+    if (!hasQuota('routes', routeCalls)) useQuota('routes', routeCalls); // this throws the "limit reached" message
     const code = wsdotCode();
     const [routes, wsdot] = await Promise.all([
       Promise.all(cars.map(routeFor)),
@@ -1004,7 +1002,7 @@ async function plan() {
       addMarker(car.driver.pos, color, '🚗', car.driver.name);
       order.forEach((r, k) => addMarker(r.pos, color, String(k + 1), r.name));
 
-      // Slow (orange) and jammed (red) stretches drawn over the car's line.
+      // slow parts in orange, jams in red
       let jamKm = 0;
       for (const iv of (state.settings.liveTraffic && route.travelAdvisory?.speedReadingIntervals) || []) {
         if (iv.speed !== 'SLOW' && iv.speed !== 'TRAFFIC_JAM') continue;
@@ -1020,7 +1018,7 @@ async function plan() {
           : '<div class="traffic">🚦 Traffic looks light</div>';
       }
 
-      // WSDOT alerts along this car's route.
+      // wsdot alerts on this car's route
       let alertsHtml = '';
       if (wsdot?.alerts) {
         const plain = path.map((p) => ({ lat: p.lat(), lng: p.lng() }));
@@ -1036,7 +1034,7 @@ async function plan() {
           : '<div class="alerts"><p class="hint">✅ No WSDOT alerts on this route.</p></div>';
       }
 
-      // Work out departure/pickup clock times when an arrival time is set.
+      // work out leave + pickup times if there's an arrive time
       const start = arrive ? new Date(+arrive - total * 1000) : null;
       let elapsed = 0;
       const stops = order.map((r, k) => {

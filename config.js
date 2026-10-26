@@ -1,10 +1,9 @@
-// Built-in keys for everyone who opens this copy of the app.
-// Fill these in once and nobody using the app has to find a key themselves.
+// keys everyone uses so nobody has to get their own
 //
-// googleMapsKey: from Google Cloud Console → APIs & Services → Credentials.
-//   Restrict it to your site's address (HTTP referrers) and set daily quotas,
-//   because anyone who opens the app can see this key.
-// wsdotCode: free from https://wsdot.wa.gov/traffic/api/ (optional).
+// googleMapsKey: google cloud console > apis & services > credentials.
+//   lock it to your site's address and set daily limits, anyone who opens
+//   the site can see it
+// wsdotCode: free at https://wsdot.wa.gov/traffic/api/ (optional)
 window.CARPOOL_CONFIG = {
   googleMapsKey: 'AIzaSyA2B-ozIQ2C8RC9iyA2tTh0FeCxaI8_-8M',
   wsdotCode: '',

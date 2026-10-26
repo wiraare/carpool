@@ -9,7 +9,7 @@
 }
 
 * { box-sizing: border-box; }
-/* Layout rules like .row { display: flex } would otherwise un-hide elements. */
+/* without this, stuff like .row { display: flex } shows hidden things */
 [hidden] { display: none !important; }
 
 body {
