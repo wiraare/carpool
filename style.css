@@ -9,6 +9,8 @@
 }
 
 * { box-sizing: border-box; }
+/* Layout rules like .row { display: flex } would otherwise un-hide elements. */
+[hidden] { display: none !important; }
 
 body {
   margin: 0;
