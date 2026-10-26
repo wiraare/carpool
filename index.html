@@ -76,6 +76,18 @@
 
     <section class="card">
       <h2>People</h2>
+      <!-- the locked group list (people.enc.json). only shows if the site has one -->
+      <div id="group-box" hidden>
+        <div id="group-locked">
+          <p class="hint">Have the group passcode? Unlock it to search everyone's names and addresses.</p>
+          <div class="row">
+            <input id="group-pass" type="password" placeholder="Group passcode" autocomplete="off">
+            <button type="button" id="group-unlock">Unlock</button>
+          </div>
+        </div>
+        <p id="group-open" class="hint" hidden><span id="group-info"></span> <button type="button" id="group-forget" class="link">Lock again</button></p>
+        <p id="group-status" class="hint" hidden></p>
+      </div>
       <form id="person-form">
         <input id="p-name" placeholder="Name (type to find saved people)" required autocomplete="off">
         <div class="row addr-row">
@@ -106,6 +118,8 @@
         </div>
         <p id="import-status" class="hint" hidden></p>
         <ul id="saved-list"></ul>
+        <p class="hint">To share these people and your driver list with your drivers, make a locked group list file. It needs a passcode, and only people with the passcode can open it.</p>
+        <button type="button" id="group-export">Make group list file</button>
       </details>
     </section>
 

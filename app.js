@@ -355,6 +355,7 @@ function bindUI() {
   $('locate').addEventListener('click', useMyLocation);
   bindSavedPeople();
   bindDrivers();
+  bindGroupList();
 
   // with a key in config.js there's nothing to set up, so the key box stays hidden
   if (builtInKey) {
@@ -698,6 +699,128 @@ function bindDrivers() {
     const list = loadDrivers();
     list.splice(+e.target.dataset.dremove, 1);
     saveDrivers(list);
+  });
+}
+
+// --- group list ---
+// people.enc.json is everyone's names + addresses and the driver list, locked
+// with a passcode (PBKDF2 -> AES-GCM). the file is public but useless without
+// the passcode. once a device unlocks it, everyone gets added to that device's
+// saved people + driver list, and the passcode is remembered so updates come
+// in by themselves
+
+const GROUP_FILE = 'people.enc.json';
+const GROUP_KEY = 'carpool-group'; // { pass, updated, names: [...] } on this device
+const GROUP_ITER = 600000;
+
+function groupState() {
+  try { return JSON.parse(localStorage.getItem(GROUP_KEY)); } catch { return null; }
+}
+
+async function groupKey(pass, salt) {
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: GROUP_ITER }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+
+async function lockGroup(pass, data) {
+  const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await groupKey(pass, salt), new TextEncoder().encode(JSON.stringify(data)));
+  return { v: 1, kdf: 'PBKDF2-SHA256', iter: GROUP_ITER, salt: bytesToB64(salt), iv: bytesToB64(iv), data: bytesToB64(new Uint8Array(ct)), updated: new Date().toISOString() };
+}
+
+async function unlockGroup(file, pass) {
+  const key = await groupKey(pass, b64ToBytes(file.salt));
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64ToBytes(file.iv) }, key, b64ToBytes(file.data));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+
+async function fetchGroupFile() {
+  try {
+    const res = await fetch(GROUP_FILE, { cache: 'no-cache' });
+    return res.ok ? await res.json() : null;
+  } catch { return null; }
+}
+
+// add the group's people + drivers to this device (the group list wins for
+// anyone in it, everyone else saved here stays)
+function mergeGroup(data, file, pass) {
+  const people = loadContacts();
+  for (const p of data.people || []) {
+    const i = people.findIndex((c) => sameName(c.name, p.name));
+    if (i >= 0) people[i] = { ...people[i], ...p }; else people.push(p);
+  }
+  saveContacts(people);
+  const drivers = loadDrivers();
+  for (const d of data.drivers || []) {
+    const i = drivers.findIndex((x) => sameName(x.name, d.name));
+    if (i >= 0) drivers[i] = { ...drivers[i], ...d }; else drivers.push(d);
+  }
+  saveDrivers(drivers);
+  localStorage.setItem(GROUP_KEY, JSON.stringify({ pass, updated: file.updated, names: (data.people || []).map((p) => p.name), drivers: (data.drivers || []).map((d) => d.name) }));
+}
+
+function renderGroup(file) {
+  const g = groupState();
+  $('group-box').hidden = !file && !g;
+  $('group-locked').hidden = !!g;
+  $('group-open').hidden = !g;
+  if (g) {
+    const when = g.updated ? new Date(g.updated).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '';
+    $('group-info').textContent = `Group list unlocked: ${g.names.length} people and ${g.drivers.length} drivers${when ? ` (updated ${when})` : ''}.`;
+  }
+}
+
+async function bindGroupList() {
+  const status = (text) => { $('group-status').hidden = !text; $('group-status').textContent = text || ''; };
+  let file = await fetchGroupFile();
+  renderGroup(file);
+
+  // already unlocked here and there's a newer list? pull it in quietly
+  const g = groupState();
+  if (file && g && file.updated !== g.updated) {
+    try { mergeGroup(await unlockGroup(file, g.pass), file, g.pass); renderGroup(file); } catch { status('The group list changed and needs the new passcode.'); localStorage.removeItem(GROUP_KEY); renderGroup(file); }
+  }
+
+  $('group-unlock').addEventListener('click', async () => {
+    const pass = $('group-pass').value;
+    if (!pass) { $('group-pass').focus(); return; }
+    file ||= await fetchGroupFile();
+    if (!file) { status('This site doesn\'t have a group list yet.'); return; }
+    status('Unlocking…');
+    try {
+      mergeGroup(await unlockGroup(file, pass), file, pass);
+      $('group-pass').value = '';
+      status('');
+      renderGroup(file);
+    } catch {
+      status('That passcode didn\'t work.');
+    }
+  });
+  $('group-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('group-unlock').click(); } });
+
+  // forget the passcode and take the group's people + drivers off this device
+  $('group-forget').addEventListener('click', () => {
+    const g = groupState();
+    if (!g) return;
+    saveContacts(loadContacts().filter((c) => !g.names.some((n) => sameName(n, c.name))));
+    saveDrivers(loadDrivers().filter((d) => !g.drivers.some((n) => sameName(n, d.name))));
+    localStorage.removeItem(GROUP_KEY);
+    renderGroup(file);
+  });
+
+  // organizer: lock this device's saved people + drivers into a file to upload
+  $('group-export').addEventListener('click', async () => {
+    const pass = prompt('Pick a group passcode (at least 12 characters, a few words works well):');
+    if (!pass) return;
+    if (pass.length < 12) { alert('Make it at least 12 characters so it can\'t be guessed.'); return; }
+    if (prompt('Type the passcode again:') !== pass) { alert('Those didn\'t match.'); return; }
+    const data = { people: loadContacts().map(({ name, addr, coords }) => ({ name, addr, ...(coords ? { coords } : {}) })), drivers: loadDrivers() };
+    const out = await lockGroup(pass, data);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(out)], { type: 'application/json' }));
+    a.download = GROUP_FILE;
+    a.click();
+    URL.revokeObjectURL(a.href);
   });
 }
 

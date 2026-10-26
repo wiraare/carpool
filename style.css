@@ -129,6 +129,13 @@ a.btn {
 .ac-list li[aria-selected=true], .ac-list li:hover { background: #eef2ff; }
 .ac-list .who-addr { font-size: 12px; color: var(--muted); }
 
+#group-box { margin-bottom: 10px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: #f8fafc; }
+#group-box .hint:first-child { margin-top: 0; }
+#group-box .row { margin-top: 6px; }
+#group-box .row input { flex: 1; min-width: 0; }
+button.link { border: 0; padding: 0; background: none; color: var(--accent); text-decoration: underline; font-size: inherit; }
+#group-export { margin-top: 6px; }
+
 #driver-box { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
 #driver-box h3 { margin: 0 0 2px; font-size: 14px; }
 #driver-box > .row { margin-top: 8px; }
