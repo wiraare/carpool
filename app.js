@@ -467,7 +467,11 @@ async function computeRoute(origin, destination, stops, departAt = null) {
     body: JSON.stringify(body),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error?.message || `Routes API error ${res.status}`);
+  if (!res.ok) {
+    const msg = data.error?.message || `Routes API error ${res.status}`;
+    if (res.status === 403) throw new Error(`Google refused the route request (${msg}). Check that Routes API is turned on for this key and that the key allows this website`);
+    throw new Error(msg);
+  }
   if (!data.routes?.length) throw new Error('No driving route found');
   return data.routes[0];
 }
@@ -824,20 +828,20 @@ async function plan() {
         elapsed += secs(legs[k]?.duration);
         const when = start ? ` · ${fmtTime(new Date(+start + elapsed * 1000))}` : ` · +${fmtDur(elapsed)}`;
         const tag = parkedIds.has(r.id) ? ' <span class="tag off">leaves car home</span>' : '';
-        return `<li>Pick up <b>${esc(r.name)}</b>${tag}${when}<div class="hint"><a href="${placeUrl(r.pos)}" target="_blank" rel="noopener">${esc(r.addr)}</a></div></li>`;
+        return `<li>Pick up <b>${esc(r.name)}</b>${tag}${when}<div class="hint"><a href="${esc(placeUrl(r.pos))}" target="_blank" rel="noopener">${esc(r.addr)}</a></div></li>`;
       }).join('');
       const nav = directionsUrl(car.driver.pos, order.map((r) => r.pos), dest);
 
       html += `
         <div class="card car" style="--c:${color}">
           <h3>🚗 ${esc(car.driver.name)} <span class="tag">${car.riders.length}/${car.driver.seats} seats</span></h3>
-          <div class="stats">${fmtDur(total)} · ${fmtDist(route.distanceMeters || 0)}${start ? ` · leave at ${fmtTime(start)}` : ''}</div>
+          <div class="stats">${fmtDur(total)} · ${fmtDist(route.distanceMeters || 0)}${start ? ` · leave at ${fmtTime(start)}${start.toDateString() !== new Date().toDateString() ? ' tomorrow' : ''}` : ''}</div>
           ${trafficLine}
           ${stops ? `<ol>${stops}</ol>` : '<p class="hint">No riders assigned — driving solo.</p>'}
           ${alertsHtml}
           <div class="nav-links">
-            <a class="btn" href="${nav}" target="_blank" rel="noopener">Open in Google Maps</a>
-            <button type="button" data-copy="${nav}">Copy route link</button>
+            <a class="btn" href="${esc(nav)}" target="_blank" rel="noopener">Open in Google Maps</a>
+            <button type="button" data-copy="${esc(nav)}">Copy route link</button>
           </div>
         </div>`;
     });
