@@ -5,22 +5,20 @@
 const COLORS = ['#2563eb', '#16a34a', '#ea580c', '#9333ea', '#db2777', '#0891b2', '#ca8a04', '#4b5563'];
 const STORE_KEY = 'carpool-state';
 const KEY_KEY = 'carpool-api-key';
-const WSDOT_KEY = 'carpool-wsdot-code';
 
 // if there's a key in config.js use that, otherwise whatever someone typed in
 const CONFIG = window.CARPOOL_CONFIG || {};
 const builtInKey = (CONFIG.googleMapsKey || '').trim();
 const apiKey = () => builtInKey || localStorage.getItem(KEY_KEY);
-const wsdotCode = () => localStorage.getItem(WSDOT_KEY) || (CONFIG.wsdotCode || '').trim();
 // places you can find by a short name (like "tlc church"), set in config.js
 const NAMED_PLACES = Array.isArray(CONFIG.places) ? CONFIG.places : [];
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-const DEFAULT_SETTINGS = { defaultSeats: 3, carsMode: 'all', maxCars: 2, liveTraffic: true, showTraffic: false, realDriveTimes: true, privateAddresses: true };
+const DEFAULT_SETTINGS = { defaultSeats: 3, carsMode: 'all', maxCars: 2, liveTraffic: true, realDriveTimes: true, privateAddresses: true };
 let state = { dest: '', arriveBy: '', people: [], settings: { ...DEFAULT_SETTINGS } };
-let map, geocoder, trafficLayer;
+let map, geocoder;
 let overlays = [];
 let located = null; // last spot from "use my location"
 // --- keeping it free ---
@@ -100,8 +98,8 @@ function loadState() {
   // merge them so nobody gets lost between copies
   if (fromLink && saved && fromLink.tripId && fromLink.tripId === saved.tripId) loaded = mergeTrips(saved, fromLink);
   if (!loaded) return state;
-  // old links don't have settings
-  return { removed: [], ...loaded, settings: { ...DEFAULT_SETTINGS, ...loaded.settings } };
+  // old links don't have settings. live traffic is always on now (there's no switch for it anymore)
+  return { removed: [], ...loaded, settings: { ...DEFAULT_SETTINGS, ...loaded.settings, liveTraffic: true } };
 }
 
 function mergeTrips(saved, link) {
@@ -215,8 +213,8 @@ function renderPeople() {
         <b>${esc(p.name)}</b>
         <span class="tag ${p.role}">${p.role === 'driver' ? 'Driver' : 'Rider'}</span>
         ${isLocked(p)
-          ? '<div class="addr">🔒 Address private</div>'
-          : `<div class="addr" title="${esc(p.addr)}">${p.coords ? '📍 ' : ''}${esc(p.addr)}</div>`}
+          ? '<div class="addr">Address private</div>'
+          : `<div class="addr" title="${esc(p.addr)}">${esc(p.addr)}</div>`}
       </div>
       ${p.role === 'driver' ? `<input class="seats" type="number" min="1" max="8" value="${p.seats}" data-seats="${p.id}" title="Free seats in ${esc(p.name)}'s car">` : ''}
       <button data-id="${p.id}" aria-label="Remove ${esc(p.name)}">✕</button>
@@ -269,19 +267,6 @@ function bindUI() {
 
   $('real-times').checked = s.realDriveTimes;
   $('real-times').addEventListener('change', (e) => { s.realDriveTimes = e.target.checked; saveState(); });
-
-  $('live-traffic').checked = s.liveTraffic;
-  $('show-traffic').checked = s.showTraffic;
-  $('wsdot-code').value = localStorage.getItem(WSDOT_KEY) || '';
-  if (CONFIG.wsdotCode) $('wsdot-code').placeholder = 'Built into this app';
-  $('live-traffic').addEventListener('change', (e) => { s.liveTraffic = e.target.checked; saveState(); });
-  $('show-traffic').addEventListener('change', (e) => { s.showTraffic = e.target.checked; saveState(); syncTrafficLayer(); });
-  // wsdot code is personal so it stays here, never in links
-  $('wsdot-code').addEventListener('change', (e) => {
-    const code = e.target.value.trim();
-    if (code) localStorage.setItem(WSDOT_KEY, code); else localStorage.removeItem(WSDOT_KEY);
-    wsdotCache = null;
-  });
 
   $('people').addEventListener('change', (e) => {
     const id = e.target.dataset?.seats;
@@ -369,12 +354,12 @@ function bindUI() {
   $('locate').addEventListener('click', useMyLocation);
   bindSavedPeople();
 
+  // with a key in config.js there's nothing to set up, so the key box stays hidden
   if (builtInKey) {
-    $('key-row').hidden = true;
-    $('key-section').querySelector('.hint').textContent = 'This app has a built-in key, so there\'s nothing to set up.';
     loadMaps(builtInKey);
     return;
   }
+  $('key-section').hidden = false;
   const key = localStorage.getItem(KEY_KEY);
   if (key) { $('api-key').value = key; loadMaps(key); }
   $('save-key').addEventListener('click', () => {
@@ -588,21 +573,26 @@ function flash(btn, text) {
 
 // --- google maps ---
 
+// if the map can't load, bring the key box back just to show what went wrong
+function mapProblem(text) {
+  $('key-section').hidden = false;
+  if (builtInKey) { $('key-row').hidden = true; $('key-section').querySelector('.hint').hidden = true; }
+  $('key-status').innerHTML = `<span class="error">${esc(text)}</span>`;
+}
+
 function loadMaps(key) {
   try {
     useQuota('map');
   } catch (e) {
-    $('key-status').innerHTML = `<span class="error">${esc(e.message)}</span>`;
+    mapProblem(e.message);
     return;
   }
   $('key-status').textContent = 'Loading map…';
-  window.gm_authFailure = () => {
-    $('key-status').innerHTML = '<span class="error">Google rejected this key. Check it and the enabled APIs.</span>';
-  };
+  window.gm_authFailure = () => mapProblem('Google rejected this key. Check it and the enabled APIs.');
   const s = document.createElement('script');
   s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&libraries=geometry,marker&v=weekly&loading=async&callback=onMapsReady`;
   s.async = true;
-  s.onerror = () => { $('key-status').innerHTML = '<span class="error">Could not load Google Maps.</span>'; };
+  s.onerror = () => mapProblem('Could not load Google Maps.');
   document.head.appendChild(s);
 }
 
@@ -617,14 +607,7 @@ window.onMapsReady = () => {
   $('key-status').textContent = 'Map loaded.';
   attachAutocomplete($('dest'));
   attachAutocomplete($('p-addr'));
-  syncTrafficLayer();
 };
-
-function syncTrafficLayer() {
-  if (!map) return;
-  trafficLayer ||= new google.maps.TrafficLayer();
-  trafficLayer.setMap(state.settings.showTraffic ? map : null);
-}
 
 // address suggestions while typing (places api new). if the key doesn't have
 // it, suggestions just turn off and typing still works
@@ -1056,82 +1039,6 @@ function planCars(drivers, riders, dest, settings) {
   return { ...current, parked };
 }
 
-// --- wsdot highway alerts ---
-// https://wsdot.wa.gov/traffic/api/
-// their server blocks normal requests from other sites but jsonp works
-
-let wsdotCache = null; // { at, alerts }
-
-function wsdotJsonp(url) {
-  return new Promise((resolve, reject) => {
-    const cb = '__wsdot' + Math.random().toString(36).slice(2);
-    const s = document.createElement('script');
-    const done = () => { delete window[cb]; s.remove(); clearTimeout(t); };
-    const t = setTimeout(() => { done(); reject(new Error('WSDOT took too long to answer')); }, 15000);
-    window[cb] = (data) => { done(); resolve(data); };
-    s.onerror = () => { done(); reject(new Error('Could not reach WSDOT')); };
-    s.src = url + '&callback=' + cb;
-    document.head.appendChild(s);
-  });
-}
-
-const wsdotDate = (v) => { const m = /\/Date\((\d+)/.exec(v || ''); return m ? new Date(+m[1]) : null; };
-
-async function fetchWsdotAlerts(code) {
-  if (wsdotCache && Date.now() - wsdotCache.at < 5 * 60000) return wsdotCache.alerts;
-  const data = await wsdotJsonp('https://wsdot.wa.gov/Traffic/api/HighwayAlerts/HighwayAlertsREST.svc/GetAlertsAsJson?AccessCode=' + encodeURIComponent(code));
-  if (!Array.isArray(data)) throw new Error('WSDOT rejected the access code');
-  const loc = (l) => (l && l.Latitude && l.Longitude ? { lat: l.Latitude, lng: l.Longitude } : null);
-  const alerts = data.map((a) => ({
-    id: a.AlertID,
-    category: a.EventCategory || 'Alert',
-    headline: (a.HeadlineDescription || '').trim(),
-    road: [a.StartRoadwayLocation?.RoadName, a.StartRoadwayLocation?.Direction].filter(Boolean).join(' '),
-    priority: a.Priority || '',
-    ends: wsdotDate(a.EndTime),
-    points: [loc(a.StartRoadwayLocation), loc(a.EndRoadwayLocation)].filter(Boolean),
-  })).filter((a) => a.points.length);
-  wsdotCache = { at: Date.now(), alerts };
-  return alerts;
-}
-
-// actually closed, not just one lane ("right lane closed" doesn't count)
-const isClosure = (a) => /clos/i.test(a.category)
-  || /road (is )?closed|all lanes (are )?(closed|blocked)|closed in both directions|fully closed/i.test(a.headline);
-
-function alertIcon(a) {
-  if (isClosure(a)) return '⛔';
-  const t = a.category + ' ' + a.headline;
-  if (/collision|crash|incident|disabled|fire|blocking/i.test(t)) return '🚨';
-  if (/construct|maint|road ?work|paving|bridge work/i.test(t)) return '🚧';
-  return '⚠️';
-}
-
-// closest distance (km) from a point to a piece of road. treats the earth as
-// flat which is fine at this size
-function segDistKm(p, a, b) {
-  const kx = 111.32 * Math.cos((p.lat * Math.PI) / 180), ky = 110.57;
-  const ax = (a.lng - p.lng) * kx, ay = (a.lat - p.lat) * ky;
-  const bx = (b.lng - p.lng) * kx, by = (b.lat - p.lat) * ky;
-  const dx = bx - ax, dy = by - ay;
-  const len2 = dx * dx + dy * dy;
-  const t = len2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / len2)) : 0;
-  return Math.hypot(ax + t * dx, ay + t * dy);
-}
-
-// alerts that start or end close to the route
-function alertsNear(path, alerts, km = 0.4) {
-  if (path.length < 2) return [];
-  const pad = km / 100;
-  const lats = path.map((p) => p.lat), lngs = path.map((p) => p.lng);
-  const box = { s: Math.min(...lats) - pad, n: Math.max(...lats) + pad, w: Math.min(...lngs) - pad, e: Math.max(...lngs) + pad };
-  return alerts.filter((a) => a.points.some((p) => {
-    if (p.lat < box.s || p.lat > box.n || p.lng < box.w || p.lng > box.e) return false;
-    for (let i = 0; i < path.length - 1; i++) if (segDistKm(p, path[i], path[i + 1]) <= km) return true;
-    return false;
-  }));
-}
-
 // --- planning ---
 
 const secs = (d) => parseInt(d, 10) || 0;
@@ -1203,17 +1110,11 @@ async function plan() {
     // check first so it never runs out halfway through
     const routeCalls = cars.length * (arrive && state.settings.liveTraffic ? 2 : 1);
     if (!hasQuota('routes', routeCalls)) useQuota('routes', routeCalls); // this throws the "limit reached" message
-    const code = wsdotCode();
-    const [routes, wsdot] = await Promise.all([
-      Promise.all(cars.map(routeFor)),
-      code ? fetchWsdotAlerts(code).then((alerts) => ({ alerts }), (e) => ({ error: e.message })) : null,
-    ]);
+    const routes = await Promise.all(cars.map(routeFor));
 
     const bounds = new google.maps.LatLngBounds(dest);
     addMarker(dest, '#111827', '★', state.dest);
     let html = `<div class="card"><b>${cars.length} car${cars.length === 1 ? '' : 's'}</b> for ${state.people.length} people${parked.length ? ` · ${parked.length} driver${parked.length === 1 ? '' : 's'} riding along instead` : ''}<div class="hint">Matched by ${esc(matchedBy)}.</div></div>`;
-    if (wsdot?.error) html += `<div class="card warn">Road alerts unavailable: ${esc(wsdot.error)}.</div>`;
-    const alertPins = new Set();
 
     cars.forEach((car, i) => {
       const color = COLORS[i % COLORS.length];
@@ -1225,7 +1126,8 @@ async function plan() {
       const path = google.maps.geometry.encoding.decodePath(route.polyline.encodedPolyline);
       overlays.push(new google.maps.Polyline({ map, path, strokeColor: color, strokeOpacity: 0.85, strokeWeight: 5 }));
       path.forEach((p) => bounds.extend(p));
-      addMarker(car.driver.pos, color, '🚗', car.driver.name);
+      // driver's pin shows their first initial
+      addMarker(car.driver.pos, color, car.driver.name.trim().charAt(0).toUpperCase(), car.driver.name);
       order.forEach((r, k) => addMarker(r.pos, color, String(k + 1), r.name));
 
       // slow parts in orange, jams in red
@@ -1240,24 +1142,8 @@ async function plan() {
       if (state.settings.liveTraffic && route.staticDuration) {
         const delay = total - secs(route.staticDuration);
         trafficLine = delay >= 60
-          ? `<div class="traffic ${jamKm ? 'jam' : 'bad'}">🚦 +${fmtDur(delay)} from traffic${jamKm ? ` · ${(jamKm / 1.609).toFixed(1)} mi of jams` : ''}</div>`
-          : '<div class="traffic">🚦 Traffic looks light</div>';
-      }
-
-      // wsdot alerts on this car's route
-      let alertsHtml = '';
-      if (wsdot?.alerts) {
-        const plain = path.map((p) => ({ lat: p.lat(), lng: p.lng() }));
-        const near = alertsNear(plain, wsdot.alerts);
-        near.forEach((a) => {
-          if (alertPins.has(a.id)) return;
-          alertPins.add(a.id);
-          addMarker(a.points[0], isClosure(a) ? '#dc2626' : '#f59e0b', alertIcon(a), `${a.category}: ${a.headline}`);
-        });
-        alertsHtml = near.length
-          ? `<div class="alerts${near.some(isClosure) ? ' closure' : ''}"><b>${near.length} road alert${near.length === 1 ? '' : 's'} on this route</b><ul>${near.map((a) => `
-              <li>${alertIcon(a)} <b>${esc(a.category)}</b>${a.road ? ` · ${esc(a.road)}` : ''}<div class="hint">${esc(a.headline.length > 160 ? a.headline.slice(0, 157) + '…' : a.headline)}${a.ends ? ` · until ${esc(a.ends.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}` : ''}</div></li>`).join('')}</ul></div>`
-          : '<div class="alerts"><p class="hint">✅ No WSDOT alerts on this route.</p></div>';
+          ? `<div class="traffic ${jamKm ? 'jam' : 'bad'}">+${fmtDur(delay)} from traffic${jamKm ? ` · ${(jamKm / 1.609).toFixed(1)} mi of jams` : ''}</div>`
+          : '<div class="traffic">Traffic looks light</div>';
       }
 
       // work out leave + pickup times if there's an arrive time
@@ -1273,11 +1159,10 @@ async function plan() {
 
       html += `
         <div class="card car" style="--c:${color}">
-          <h3>🚗 ${esc(car.driver.name)} <span class="tag">${car.riders.length}/${car.driver.seats} seats</span></h3>
+          <h3>${esc(car.driver.name)} <span class="tag">${car.riders.length}/${car.driver.seats} seats</span></h3>
           <div class="stats">${fmtDur(total)} · ${fmtDist(route.distanceMeters || 0)}${start ? ` · leave at ${fmtTime(start)}${start.toDateString() !== new Date().toDateString() ? ' tomorrow' : ''}` : ''}</div>
           ${trafficLine}
           ${stops ? `<ol>${stops}</ol>` : '<p class="hint">No riders assigned — driving solo.</p>'}
-          ${alertsHtml}
           <div class="nav-links">
             <a class="btn" href="${esc(nav)}" target="_blank" rel="noopener">Open in Google Maps</a>
             <button type="button" data-copy="${esc(nav)}">Copy route link</button>

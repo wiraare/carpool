@@ -98,12 +98,6 @@ button.ghost { color: var(--danger); }
 .traffic { font-size: 12px; margin-top: 2px; }
 .traffic.bad { color: #b45309; }
 .traffic.jam { color: var(--danger); }
-.alerts { margin-top: 8px; padding: 8px; border-radius: 6px; background: #fffbeb; border: 1px solid #fde68a; }
-.alerts.closure { background: #fef2f2; border-color: #fecaca; }
-.alerts ul { list-style: none; margin: 4px 0 0; padding: 0; }
-.alerts li { padding: 4px 0; border-top: 1px solid rgb(0 0 0 / .06); font-size: 13px; }
-.alerts li:first-child { border-top: 0; }
-.alerts .hint { margin: 0; }
 .nav-links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 a.btn {
   padding: 7px 9px;

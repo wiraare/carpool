@@ -1,4 +1,4 @@
-# carpool planner 🚗
+# carpool planner
 
 **try it here → https://wiraare.github.io/carpool/**
 
@@ -11,9 +11,9 @@ i made it because planning rides for a group is always a mess of group chats and
 - **matches riders to drivers** using actual drive times from google, not just straight lines on a map. this matters a lot around the sound (bremerton looks close to seattle but it really isn't lol)
 - **plans each car's route** with the best pickup order, plus when to leave and what time each person gets picked up if you set an arrive-by time
 - **live traffic** so the times are actually realistic, and it shows slow parts in orange and jams in red
-- **construction + crash alerts** from WSDOT along each route (washington highways only)
 - **"open in google maps"** button for each driver so they can just hit go on their phone
 - **use my location** if you don't wanna type your address
+- **saved people** so you can just type someone's name and their address fills in (only saved in your own browser)
 - **fewest cars mode** if you'd rather not have 5 cars going to the same place
 - **addresses stay private** (more on that below)
 
@@ -26,7 +26,7 @@ i made it because planning rides for a group is always a mess of group chats and
 5. open the links they send you, they all get merged into your trip
 6. hit **plan carpools** and send each driver their google maps link
 
-## privacy 🔒
+## privacy
 
 people's home addresses are private by default. whoever starts the trip is the only one who can see them. everyone else just sees names.
 
@@ -36,7 +36,7 @@ how it works: when you start a trip your browser makes a key pair. the public ha
 
 ## is it free?
 
-yep. the site is hosted free on github pages, and the google maps stuff stays inside google's free monthly amount. the app also counts its own google requests and stops itself way before it'd cost anything. wsdot is free too.
+yep. the site is hosted free on github pages, and the google maps stuff stays inside google's free monthly amount. the app also counts its own google requests and stops itself way before it'd cost anything.
 
 ## running your own copy
 
@@ -58,4 +58,4 @@ there's no build step or anything, it's just html, css and js.
 - `index.html` - the page
 - `app.js` - everything that actually does stuff
 - `style.css` - how it looks
-- `config.js` - the google key (and an optional wsdot code)
+- `config.js` - the google key and places you can find by name (like tlc church)

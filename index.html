@@ -15,7 +15,8 @@
       <p class="sub">Add a destination and everyone coming. Drivers get the riders that cost them the least detour.</p>
     </header>
 
-    <section id="key-section" class="card">
+    <!-- only shows up if there's no key in config.js (or the map can't load) -->
+    <section id="key-section" class="card" hidden>
       <h2>Google Maps API key</h2>
       <p class="hint">Needs <b>Maps JavaScript API</b>, <b>Geocoding API</b> and <b>Routes API</b> enabled. Add <b>Places API (New)</b> for address suggestions. Stored only in this browser.</p>
       <div class="row" id="key-row">
@@ -54,22 +55,12 @@
     </section>
 
     <section class="card">
-      <h2>Traffic &amp; road alerts</h2>
-      <label class="check"><input id="live-traffic" type="checkbox"> Use live traffic for drive times</label>
-      <label class="check"><input id="show-traffic" type="checkbox"> Show traffic on the map</label>
-      <label class="hint">WSDOT access code (construction &amp; accident alerts in Washington)
-        <input id="wsdot-code" type="password" placeholder="Optional" autocomplete="off">
-      </label>
-      <p class="hint">Get a free code at <a href="https://wsdot.wa.gov/traffic/api/" target="_blank" rel="noopener">wsdot.wa.gov/traffic/api</a>. Stored only in this browser. Covers state highways only.</p>
-    </section>
-
-    <section class="card">
       <h2>People</h2>
       <form id="person-form">
         <input id="p-name" placeholder="Name (type to find saved people)" required autocomplete="off">
         <div class="row addr-row">
           <input id="p-addr" placeholder="Starting address" required>
-          <button type="button" id="locate" title="Fill in where you are right now">📍 Use my location</button>
+          <button type="button" id="locate" title="Fill in where you are right now">Use my location</button>
         </div>
         <p id="locate-status" class="hint" hidden></p>
         <div class="row">
@@ -82,10 +73,10 @@
         </div>
       </form>
       <ul id="people"></ul>
-      <label class="check privacy"><input id="private" type="checkbox"> 🔒 Keep home addresses private in share links</label>
+      <label class="check privacy"><input id="private" type="checkbox"> Keep home addresses private in share links</label>
       <p id="privacy-note" class="hint"></p>
       <details id="saved">
-        <summary>📇 Saved people (<span id="saved-count">0</span>)</summary>
+        <summary>Saved people (<span id="saved-count">0</span>)</summary>
         <p class="hint">Only saved in this browser. They're never in share links or on the website, so other people can't look them up.</p>
         <textarea id="import-text" rows="5" placeholder="Paste a list, one per line, like:&#10;1. Ezel → Oliv Seattle&#10;2. Ko Aaron &amp; Ci Gab → 2125 127th Pl SW, Everett"></textarea>
         <label class="check"><input id="import-trip" type="checkbox"> Also add them to this trip (as riders)</label>
