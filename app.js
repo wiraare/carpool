@@ -308,6 +308,7 @@ function bindUI() {
       // keep the exact gps spot unless they changed the address after
       ...(located && located.addr === addr ? { coords: { lat: located.lat, lng: located.lng } } : {}),
     });
+    rememberPerson(state.people[state.people.length - 1]);
     located = null;
     $('locate-status').hidden = true;
     $('p-name').value = '';
@@ -364,6 +365,7 @@ function bindUI() {
     }
   });
   $('locate').addEventListener('click', useMyLocation);
+  bindSavedPeople();
 
   if (builtInKey) {
     $('key-row').hidden = true;
@@ -418,6 +420,162 @@ function useMyLocation() {
 function clampInt(v, min, max, fallback) {
   const n = parseInt(v, 10);
   return Number.isNaN(n) ? fallback : Math.min(max, Math.max(min, n));
+}
+
+// --- saved people ---
+// a little address book so you can type someone's name and get their address.
+// it only lives in this browser (never in links or on the site), so nobody
+// else visiting the site can look anyone up
+
+const CONTACTS_KEY = 'carpool-contacts';
+const sameName = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+function loadContacts() {
+  try { return JSON.parse(localStorage.getItem(CONTACTS_KEY)) || []; } catch { return []; }
+}
+
+function saveContacts(list) {
+  list.sort((a, b) => a.name.localeCompare(b.name));
+  try { localStorage.setItem(CONTACTS_KEY, JSON.stringify(list)); } catch {}
+  renderSavedPeople();
+}
+
+// add or update someone (matched by name, not caring about caps)
+function rememberPerson(p) {
+  if (!p.name || !p.addr) return;
+  const list = loadContacts();
+  const c = { name: p.name.trim(), addr: p.addr.trim(), ...(p.coords ? { coords: p.coords } : {}), ...(p.role === 'driver' ? { seats: p.seats } : {}) };
+  const i = list.findIndex((x) => sameName(x.name, c.name));
+  if (i >= 0) list[i] = { ...list[i], ...c }; else list.push(c);
+  saveContacts(list);
+}
+
+// turns "12. Ko Aaron & Ci Gab → 2125 127th Pl SW, Everett" into two people.
+// handles → -> => : as the split, and skips lines like "Aldo → 5 people"
+function parsePeopleList(text) {
+  const out = [];
+  for (let line of text.split(/\r?\n/)) {
+    line = line.replace(/^\s*\d+\s*[.)]\s*/, '').trim();
+    const m = line.match(/^(.+?)\s*(?:→|->|=>|:)\s*(.+)$/);
+    if (!m) continue;
+    const addr = m[2].trim();
+    if (/^\d+\s*(people|seats?)\b/i.test(addr)) continue;
+    for (const name of m[1].split(/\s*(?:&|\/|,|\band\b)\s*/i)) if (name.trim()) out.push({ name: name.trim(), addr });
+  }
+  return out;
+}
+
+function renderSavedPeople() {
+  const list = loadContacts();
+  $('saved-count').textContent = list.length;
+  $('saved-list').innerHTML = list.map((c, i) => `
+    <li>
+      <div class="who"><b>${esc(c.name)}</b>${c.seats ? ' <span class="tag">Driver</span>' : ''}<div class="addr" title="${esc(c.addr)}">${esc(c.addr)}</div></div>
+      <button type="button" data-forget="${i}" aria-label="Forget ${esc(c.name)}">✕</button>
+    </li>`).join('') || '<li class="hint">Nobody saved yet. Add people above or paste a list.</li>';
+}
+
+function bindSavedPeople() {
+  renderSavedPeople();
+
+  $('import-btn').addEventListener('click', () => {
+    const found = parsePeopleList($('import-text').value);
+    const status = $('import-status');
+    status.hidden = false;
+    if (!found.length) { status.textContent = 'Couldn\'t find anyone. Put one person per line, like "Name → address".'; return; }
+    const list = loadContacts();
+    for (const p of found) {
+      const i = list.findIndex((x) => sameName(x.name, p.name));
+      if (i >= 0) list[i] = { ...list[i], addr: p.addr, coords: undefined }; else list.push(p);
+    }
+    saveContacts(list);
+    let added = 0;
+    if ($('import-trip').checked) {
+      for (const p of found) {
+        if (state.people.some((x) => sameName(x.name, p.name))) continue;
+        state.people.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: p.name, addr: p.addr, role: 'rider', seats: 0 });
+        added++;
+      }
+      saveState();
+      renderPeople();
+    }
+    status.textContent = `Saved ${found.length} ${found.length === 1 ? 'person' : 'people'}${added ? `, added ${added} to this trip` : ''}.`;
+    $('import-text').value = '';
+  });
+
+  $('saved-list').addEventListener('click', (e) => {
+    const i = e.target.dataset?.forget;
+    if (i === undefined) return;
+    const list = loadContacts();
+    list.splice(+i, 1);
+    saveContacts(list);
+  });
+
+  $('forget-all').addEventListener('click', () => {
+    if (!confirm('Forget everyone saved in this browser? (The current trip stays.)')) return;
+    saveContacts([]);
+  });
+
+  attachNameLookup($('p-name'));
+}
+
+// typing in the name box shows saved people, picking one fills in the address
+function attachNameLookup(input) {
+  const wrap = document.createElement('div');
+  wrap.className = 'ac-wrap';
+  input.replaceWith(wrap);
+  wrap.appendChild(input);
+  const list = document.createElement('ul');
+  list.className = 'ac-list';
+  list.setAttribute('role', 'listbox');
+  list.hidden = true;
+  wrap.appendChild(list);
+  input.setAttribute('aria-autocomplete', 'list');
+
+  let items = [], active = -1;
+  const close = () => { list.hidden = true; items = []; active = -1; };
+  const highlight = (i) => {
+    active = i;
+    [...list.querySelectorAll('li[data-i]')].forEach((li) => li.setAttribute('aria-selected', String(+li.dataset.i === i)));
+  };
+  const choose = (c) => {
+    input.value = c.name;
+    $('p-addr').value = c.addr;
+    // keep their exact gps spot if we saved one
+    located = c.coords ? { ...c.coords, addr: c.addr } : null;
+    if (c.seats) {
+      $('p-role').value = 'driver';
+      $('p-seats').value = c.seats;
+      $('p-seats').hidden = false;
+    }
+    close();
+    input.form.querySelector('button[type=submit]').focus();
+  };
+
+  input.addEventListener('input', () => {
+    const q = input.value.trim().toLowerCase();
+    if (!q) { close(); return; }
+    // names starting with what you typed come first, then ones that just contain it
+    const all = loadContacts();
+    items = [...all.filter((c) => c.name.toLowerCase().startsWith(q)), ...all.filter((c) => !c.name.toLowerCase().startsWith(q) && c.name.toLowerCase().includes(q))].slice(0, 6);
+    if (!items.length) { close(); return; }
+    list.innerHTML = items.map((c, i) => `<li role="option" data-i="${i}"><b>${esc(c.name)}</b><div class="who-addr">${esc(c.addr)}</div></li>`).join('');
+    list.hidden = false;
+    highlight(items.length === 1 ? 0 : -1);
+  });
+  input.addEventListener('keydown', (e) => {
+    if (list.hidden || !items.length) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); highlight((active + 1) % items.length); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); highlight((active - 1 + items.length) % items.length); }
+    else if ((e.key === 'Enter' || e.key === 'Tab') && active >= 0) { e.preventDefault(); choose(items[active]); }
+    else if (e.key === 'Escape') close();
+  });
+  list.addEventListener('mousedown', (e) => {
+    const li = e.target.closest('li[data-i]');
+    e.preventDefault();
+    if (li) choose(items[+li.dataset.i]);
+  });
+  input.addEventListener('blur', close);
 }
 
 function flash(btn, text) {
@@ -590,7 +748,8 @@ function attachAutocomplete(input) {
 async function geocode(address) {
   if (geoCache.has(address)) return geoCache.get(address);
   useQuota('geocode');
-  const { results } = await geocoder.geocode({ address });
+  // stay in the US, otherwise "17824 33rd Pl W, WA" ends up in poland
+  const { results } = await geocoder.geocode({ address, componentRestrictions: { country: 'US' } });
   if (!results.length) throw new Error(`Couldn't find "${address}"`);
   const loc = results[0].geometry.location;
   const out = { lat: loc.lat(), lng: loc.lng(), label: results[0].formatted_address, at: Date.now() };

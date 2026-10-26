@@ -66,7 +66,7 @@
     <section class="card">
       <h2>People</h2>
       <form id="person-form">
-        <input id="p-name" placeholder="Name" required>
+        <input id="p-name" placeholder="Name (type to find saved people)" required autocomplete="off">
         <div class="row addr-row">
           <input id="p-addr" placeholder="Starting address" required>
           <button type="button" id="locate" title="Fill in where you are right now">📍 Use my location</button>
@@ -84,6 +84,18 @@
       <ul id="people"></ul>
       <label class="check privacy"><input id="private" type="checkbox"> 🔒 Keep home addresses private in share links</label>
       <p id="privacy-note" class="hint"></p>
+      <details id="saved">
+        <summary>📇 Saved people (<span id="saved-count">0</span>)</summary>
+        <p class="hint">Only saved in this browser. They're never in share links or on the website, so other people can't look them up.</p>
+        <textarea id="import-text" rows="5" placeholder="Paste a list, one per line, like:&#10;1. Ezel → Oliv Seattle&#10;2. Ko Aaron &amp; Ci Gab → 2125 127th Pl SW, Everett"></textarea>
+        <label class="check"><input id="import-trip" type="checkbox"> Also add them to this trip (as riders)</label>
+        <div class="row">
+          <button type="button" id="import-btn">Save list</button>
+          <button type="button" id="forget-all" class="ghost">Forget everyone</button>
+        </div>
+        <p id="import-status" class="hint" hidden></p>
+        <ul id="saved-list"></ul>
+      </details>
     </section>
 
     <section class="card actions">
