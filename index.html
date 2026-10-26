@@ -49,7 +49,8 @@
       <label id="max-cars-wrap" class="hint" hidden>Maximum cars
         <input id="max-cars" type="number" min="1" value="2">
       </label>
-      <p class="hint">Drivers who aren't needed ride with someone else instead. Change a driver's seats right in the list below.</p>
+      <label class="check"><input id="real-times" type="checkbox"> Match riders by real drive times</label>
+      <p class="hint">Drivers who aren't needed ride with someone else instead. Change a driver's seats right in the list below. Real drive times avoid pairing people across water; turn off to match by straight-line distance.</p>
     </section>
 
     <section class="card">
@@ -81,13 +82,15 @@
         </div>
       </form>
       <ul id="people"></ul>
+      <label class="check privacy"><input id="private" type="checkbox"> 🔒 Keep home addresses private in share links</label>
+      <p id="privacy-note" class="hint"></p>
     </section>
 
     <section class="card actions">
       <button id="plan" class="primary">Plan carpools</button>
       <button id="share">Copy share link</button>
       <button id="clear" class="ghost">Clear all</button>
-      <p class="hint">Share the link so others can add themselves, then have them send it back (or plan from any copy).</p>
+      <p class="hint">Share the link so others can add themselves, then have them send their link back to you. Opening it here adds them to your trip.</p>
     </section>
 
     <section id="results"></section>

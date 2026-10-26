@@ -15,7 +15,7 @@ const wsdotCode = () => localStorage.getItem(WSDOT_KEY) || (CONFIG.wsdotCode || 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-const DEFAULT_SETTINGS = { defaultSeats: 3, carsMode: 'all', maxCars: 2, liveTraffic: true, showTraffic: false };
+const DEFAULT_SETTINGS = { defaultSeats: 3, carsMode: 'all', maxCars: 2, liveTraffic: true, showTraffic: false, realDriveTimes: true, privateAddresses: true };
 let state = { dest: '', arriveBy: '', people: [], settings: { ...DEFAULT_SETTINGS } };
 let map, geocoder, trafficLayer;
 let overlays = [];
@@ -25,16 +25,17 @@ let located = null; // { lat, lng, addr } from the last "Use my location"
 // counts its own calls and refuses to go past these limits, set well under
 // the free amounts, so it never runs into paid usage. Counts are kept per
 // browser and reset each month (Pacific time, like Google's billing).
-const FREE_LIMITS = { map: 8000, geocode: 8000, routes: 800, suggest: 4000 };
+const FREE_LIMITS = { map: 8000, geocode: 8000, routes: 800, suggest: 4000, matrix: 8000 };
 const USAGE_KEY = 'carpool-usage';
-const USAGE_LABELS = { map: 'map loads', geocode: 'address lookups', routes: 'routes', suggest: 'suggestions' };
+const USAGE_LABELS = { map: 'map loads', geocode: 'address lookups', routes: 'routes', suggest: 'suggestions', matrix: 'drive-time pairs' };
 
 const usageMonth = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }).slice(0, 7);
 
 function loadUsage() {
   let u = null;
   try { u = JSON.parse(localStorage.getItem(USAGE_KEY)); } catch {}
-  if (!u || u.month !== usageMonth()) u = { month: usageMonth(), map: 0, geocode: 0, routes: 0, suggest: 0 };
+  if (!u || u.month !== usageMonth()) u = { month: usageMonth() };
+  for (const k of Object.keys(FREE_LIMITS)) u[k] ||= 0;
   return u;
 }
 
@@ -80,23 +81,126 @@ function decodeState(str) {
   return JSON.parse(new TextDecoder().decode(bytes));
 }
 
+// The share link (#trip=…) is the whole trip. When private addresses are on,
+// whoever starts the trip (the organizer) gets a key pair: the public half
+// goes in the link, the private half stays in their browser only. Every
+// address in the link is encrypted to the public half, so only the organizer
+// can read them; anyone else with the link sees names only, but can still add
+// themselves (their own address stays readable to them in their browser).
+
 function loadState() {
   const m = location.hash.match(/^#trip=(.+)$/);
-  let loaded = null;
-  try {
-    if (m) loaded = decodeState(m[1]);
-    else if (localStorage.getItem(STORE_KEY)) loaded = JSON.parse(localStorage.getItem(STORE_KEY));
-  } catch (e) {
-    console.warn('Could not load saved trip', e);
-  }
+  let fromLink = null, saved = null;
+  try { if (m) fromLink = decodeState(m[1]); } catch (e) { console.warn('Could not read the trip link', e); }
+  try { saved = JSON.parse(localStorage.getItem(STORE_KEY)); } catch {}
+  let loaded = fromLink || saved;
+  // Same trip as the one saved here (e.g. a link someone sent back): merge, so
+  // people added in different copies of the link all end up together.
+  if (fromLink && saved && fromLink.tripId && fromLink.tripId === saved.tripId) loaded = mergeTrips(saved, fromLink);
   if (!loaded) return state;
   // Older links have no settings block.
-  return { ...loaded, settings: { ...DEFAULT_SETTINGS, ...loaded.settings } };
+  return { removed: [], ...loaded, settings: { ...DEFAULT_SETTINGS, ...loaded.settings } };
 }
+
+function mergeTrips(saved, link) {
+  const removed = [...new Set([...(saved.removed || []), ...(link.removed || [])])];
+  const people = new Map();
+  for (const p of link.people || []) people.set(p.id, p);
+  for (const p of saved.people || []) {
+    const q = people.get(p.id);
+    // Keep the readable address we already have here.
+    if (q) people.set(p.id, { ...q, ...(p.addr ? { addr: p.addr, coords: p.coords } : {}) });
+    else people.set(p.id, p);
+  }
+  return { ...link, removed, people: [...people.values()].filter((p) => !removed.includes(p.id)) };
+}
+
+let hashSeq = 0;
 
 function saveState() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch {}
-  history.replaceState(null, '', '#trip=' + encodeState(state));
+  return updateHash();
+}
+
+// Rewrites the address bar (= the share link), encrypting addresses first
+// when they're private. Returns once the link is up to date.
+async function updateHash() {
+  const mine = ++hashSeq;
+  let shared = state;
+  if (state.settings.privateAddresses) {
+    if (!state.pub) await startPrivateTrip();
+    const people = [];
+    for (const p of state.people) {
+      const { addr, coords, encSig, ...rest } = p;
+      const sig = addr ? JSON.stringify([addr, coords || null]) : null;
+      if (sig && p.encSig !== sig) { p.enc = await encryptAddress(state.pub, { addr, coords }); p.encSig = sig; }
+      people.push({ ...rest, enc: p.enc });
+    }
+    shared = { ...state, people };
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch {}
+  } else {
+    // Addresses this browser can't read stay encrypted.
+    shared = { ...state, people: state.people.map(({ enc, encSig, ...p }) => (isLocked(p) ? { ...p, enc } : p)) };
+  }
+  if (mine === hashSeq) history.replaceState(null, '', '#trip=' + encodeState(shared));
+}
+
+// ---------- address privacy (Web Crypto: ECDH P-256 + AES-GCM) ----------
+
+const TRIP_KEYS = 'carpool-tripkeys'; // tripId -> organizer's private key (JWK)
+const EC = { name: 'ECDH', namedCurve: 'P-256' };
+const bytesToB64 = (b) => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const b64ToBytes = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
+
+function tripKeys() {
+  try { return JSON.parse(localStorage.getItem(TRIP_KEYS)) || {}; } catch { return {}; }
+}
+const isOrganizer = () => !!(state.tripId && tripKeys()[state.tripId]);
+const isLocked = (p) => !p.addr && !p.coords;
+
+async function startPrivateTrip() {
+  const pair = await crypto.subtle.generateKey(EC, true, ['deriveKey']);
+  state.tripId = crypto.randomUUID();
+  state.pub = bytesToB64(await crypto.subtle.exportKey('raw', pair.publicKey));
+  const keys = tripKeys();
+  keys[state.tripId] = await crypto.subtle.exportKey('jwk', pair.privateKey);
+  localStorage.setItem(TRIP_KEYS, JSON.stringify(keys));
+}
+
+// A fresh throwaway key pair per address; the result is
+// [its public key (65 bytes) | IV (12) | AES-GCM ciphertext].
+async function encryptAddress(pubB64, value) {
+  const eph = await crypto.subtle.generateKey(EC, true, ['deriveKey']);
+  const pub = await crypto.subtle.importKey('raw', b64ToBytes(pubB64), EC, false, []);
+  const aes = await crypto.subtle.deriveKey({ name: 'ECDH', public: pub }, eph.privateKey, { name: 'AES-GCM', length: 256 }, false, ['encrypt']);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, aes, new TextEncoder().encode(JSON.stringify(value)));
+  const ephRaw = new Uint8Array(await crypto.subtle.exportKey('raw', eph.publicKey));
+  return bytesToB64(new Uint8Array([...ephRaw, ...iv, ...new Uint8Array(ct)]));
+}
+
+async function decryptAddress(jwk, enc) {
+  const b = b64ToBytes(enc);
+  const priv = await crypto.subtle.importKey('jwk', jwk, EC, false, ['deriveKey']);
+  const eph = await crypto.subtle.importKey('raw', b.slice(0, 65), EC, false, []);
+  const aes = await crypto.subtle.deriveKey({ name: 'ECDH', public: eph }, priv, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b.slice(65, 77) }, aes, b.slice(77));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+
+// The organizer's browser unlocks every address it can.
+async function unlockAddresses() {
+  const jwk = tripKeys()[state.tripId];
+  if (!jwk) return;
+  for (const p of state.people) {
+    if (!isLocked(p) || !p.enc) continue;
+    try {
+      const { addr, coords } = await decryptAddress(jwk, p.enc);
+      Object.assign(p, { addr, ...(coords ? { coords } : {}), encSig: JSON.stringify([addr, coords || null]) });
+    } catch (e) {
+      console.warn(`Couldn't unlock ${p.name}'s address`, e);
+    }
+  }
 }
 
 // ---------- UI ----------
@@ -108,11 +212,27 @@ function renderPeople() {
       <div class="who">
         <b>${esc(p.name)}</b>
         <span class="tag ${p.role}">${p.role === 'driver' ? 'Driver' : 'Rider'}</span>
-        <div class="addr" title="${esc(p.addr)}">${p.coords ? '📍 ' : ''}${esc(p.addr)}</div>
+        ${isLocked(p)
+          ? '<div class="addr">🔒 Address private</div>'
+          : `<div class="addr" title="${esc(p.addr)}">${p.coords ? '📍 ' : ''}${esc(p.addr)}</div>`}
       </div>
       ${p.role === 'driver' ? `<input class="seats" type="number" min="1" max="8" value="${p.seats}" data-seats="${p.id}" title="Free seats in ${esc(p.name)}'s car">` : ''}
       <button data-id="${p.id}" aria-label="Remove ${esc(p.name)}">✕</button>
     </li>`).join('') || '<li class="hint">No one added yet.</li>';
+  renderPrivacy();
+}
+
+function renderPrivacy() {
+  const on = state.settings.privateAddresses;
+  const guest = on && state.pub && !isOrganizer();
+  $('private').checked = on;
+  // Only the organizer can turn privacy off; anyone else couldn't read the addresses anyway.
+  $('private').disabled = !!guest;
+  $('privacy-note').textContent = !on
+    ? 'Share links include everyone\'s home address.'
+    : guest
+      ? 'Addresses are private: only the person who started this trip can see them and plan. Add yourself, then use "Copy share link" and send it back to them.'
+      : 'Share links hide home addresses from everyone but you. The key that unlocks them is saved only in this browser, so plan the trip here.';
 }
 
 function bindUI() {
@@ -144,6 +264,9 @@ function bindUI() {
     e.target.value = s.maxCars;
     saveState();
   });
+
+  $('real-times').checked = s.realDriveTimes;
+  $('real-times').addEventListener('change', (e) => { s.realDriveTimes = e.target.checked; saveState(); });
 
   $('live-traffic').checked = s.liveTraffic;
   $('show-traffic').checked = s.showTraffic;
@@ -199,12 +322,16 @@ function bindUI() {
     const id = e.target.dataset?.id;
     if (!id) return;
     state.people = state.people.filter((p) => p.id !== id);
+    // Remember the removal so merging an older link doesn't bring them back.
+    state.removed = [...(state.removed || []), id];
     saveState();
     renderPeople();
   });
 
+  $('private').addEventListener('change', (e) => { state.settings.privateAddresses = e.target.checked; saveState().then(renderPrivacy); });
+
   $('share').addEventListener('click', async () => {
-    saveState();
+    await saveState();
     try {
       await navigator.clipboard.writeText(location.href);
       flash($('share'), 'Copied!');
@@ -215,7 +342,8 @@ function bindUI() {
 
   $('clear').addEventListener('click', () => {
     if (!confirm('Remove the destination and everyone on the list?')) return;
-    state = { dest: '', arriveBy: '', people: [], settings: state.settings };
+    // A new trip gets new keys (made on the next save).
+    state = { dest: '', arriveBy: '', people: [], removed: [], settings: state.settings };
     $('dest').value = '';
     $('arrive-by').value = '';
     $('results').innerHTML = '';
@@ -502,9 +630,15 @@ function haversine(a, b) {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
-// Regret insertion: for each rider find the cheapest detour (straight-line)
-// into every car with a free seat. Seat first the rider who'd lose the most if
-// their best car filled up, so nobody gets stranded with a long detour later.
+// How the matcher measures a leg from a to b. Straight-line km by default;
+// while planning it's swapped for real drive seconds from Google (see
+// driveTimeMatrix), which matters around Puget Sound where water makes
+// straight lines badly wrong.
+let travel = haversine;
+
+// Regret insertion: for each rider find the cheapest detour into every car
+// with a free seat. Seat first the rider who'd lose the most if their best
+// car filled up, so nobody gets stranded with a long detour later.
 // The Routes API reorders pickups afterwards.
 function assign(drivers, riders, dest, polish = true) {
   const cars = drivers.map((d) => ({ driver: d, riders: [] }));
@@ -518,7 +652,7 @@ function assign(drivers, riders, dest, polish = true) {
         const path = [car.driver.pos, ...car.riders.map((r) => r.pos), dest];
         let best = null;
         for (let i = 0; i < path.length - 1; i++) {
-          const cost = haversine(path[i], rider.pos) + haversine(rider.pos, path[i + 1]) - haversine(path[i], path[i + 1]);
+          const cost = travel(path[i], rider.pos) + travel(rider.pos, path[i + 1]) - travel(path[i], path[i + 1]);
           if (!best || cost < best.cost) best = { cost, car, i };
         }
         options.push(best);
@@ -545,14 +679,14 @@ function orderRiders(driver, riders, dest) {
     const path = [driver.pos, ...order.map((x) => x.pos), dest];
     let bestI = 0, bestCost = Infinity;
     for (let i = 0; i < path.length - 1; i++) {
-      const cost = haversine(path[i], r.pos) + haversine(r.pos, path[i + 1]) - haversine(path[i], path[i + 1]);
+      const cost = travel(path[i], r.pos) + travel(r.pos, path[i + 1]) - travel(path[i], path[i + 1]);
       if (cost < bestCost) { bestCost = cost; bestI = i; }
     }
     order.splice(bestI, 0, r);
   }
   const path = [driver.pos, ...order.map((x) => x.pos), dest];
   let km = 0;
-  for (let i = 0; i < path.length - 1; i++) km += haversine(path[i], path[i + 1]);
+  for (let i = 0; i < path.length - 1; i++) km += travel(path[i], path[i + 1]);
   return { order, km };
 }
 
@@ -591,15 +725,70 @@ function improve(cars, dest) {
   }
 }
 
-// Total straight-line driving across all cars, with a heavy penalty for anyone
-// left without a seat.
+// Total driving across all cars, with a heavy penalty for anyone left without
+// a seat.
 function score({ cars, unassigned }, dest) {
   let km = 0;
   for (const car of cars) {
     const path = [car.driver.pos, ...car.riders.map((r) => r.pos), dest];
-    for (let i = 0; i < path.length - 1; i++) km += haversine(path[i], path[i + 1]);
+    for (let i = 0; i < path.length - 1; i++) km += travel(path[i], path[i + 1]);
   }
   return km + unassigned.length * 1e6;
+}
+
+// Real drive times between every person (and from each person to the
+// destination) via Google's Route Matrix, returned as a `travel` function in
+// seconds. Returns { reason } instead when it can't be used. Plain drive
+// times without live traffic: they only decide who rides with whom, and that
+// keeps it in Google's cheapest (10,000 free a month) tier.
+const matrixCache = new Map(); // "from|to" -> seconds, for this page visit only
+
+async function driveTimeMatrix(points, dest) {
+  const key = (p) => `${p.lat.toFixed(6)},${p.lng.toFixed(6)}`;
+  const origins = [...new Map(points.map((p) => [key(p), p])).values()];
+  const dests = [...new Map([...origins, dest].map((p) => [key(p), p])).values()];
+  const missing = [];
+  for (const o of origins) for (const d of dests) if (key(o) !== key(d) && !matrixCache.has(key(o) + '|' + key(d))) missing.push([o, d]);
+
+  if (missing.length) {
+    // Ask only for the rows/columns still missing, 25 × 25 per request (Google's limit).
+    const os = [...new Map(missing.map(([o]) => [key(o), o])).values()];
+    const ds = [...new Map(missing.map(([, d]) => [key(d), d])).values()];
+    const pairs = os.length * ds.length;
+    if (!hasQuota('matrix', pairs)) return { reason: 'this month\'s free drive-time allowance is used up' };
+    const wp = (p) => ({ waypoint: { location: { latLng: { latitude: p.lat, longitude: p.lng } } } });
+    for (let i = 0; i < os.length; i += 25) {
+      for (let j = 0; j < ds.length; j += 25) {
+        const oc = os.slice(i, i + 25), dc = ds.slice(j, j + 25);
+        useQuota('matrix', oc.length * dc.length);
+        const res = await fetch('https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix', {
+          method: 'POST',
+          referrerPolicy: 'no-referrer-when-downgrade',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': apiKey(),
+            'X-Goog-FieldMask': 'originIndex,destinationIndex,duration,condition',
+          },
+          body: JSON.stringify({ origins: oc.map(wp), destinations: dc.map(wp), travelMode: 'DRIVE', routingPreference: 'TRAFFIC_UNAWARE' }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error?.message || `Route Matrix error ${res.status}`);
+        for (const el of data) {
+          const o = oc[el.originIndex || 0], d = dc[el.destinationIndex || 0];
+          // No road between them (an island without a ferry, say): make it very costly.
+          matrixCache.set(key(o) + '|' + key(d), el.condition === 'ROUTE_EXISTS' ? secs(el.duration) : 1e5);
+        }
+      }
+    }
+  }
+  return {
+    cost: (a, b) => {
+      const ka = key(a), kb = key(b);
+      if (ka === kb) return 0;
+      // Anything Google didn't answer falls back to ~1 km per minute.
+      return matrixCache.get(ka + '|' + kb) ?? haversine(a, b) * 60;
+    },
+  };
 }
 
 // People that the k roomiest cars in `cars` can carry (drivers included).
@@ -735,6 +924,11 @@ async function plan() {
   const riders = state.people.filter((p) => p.role === 'rider');
   if (!state.dest) { out.innerHTML = '<div class="card error">Add a destination.</div>'; return; }
   if (!drivers.length) { out.innerHTML = '<div class="card error">Add at least one driver.</div>'; return; }
+  const locked = state.people.filter(isLocked);
+  if (locked.length) {
+    out.innerHTML = `<div class="card error">${locked.length === 1 ? '1 person\'s address is' : `${locked.length} people's addresses are`} private, so only the person who started this trip can plan it. Copy the share link and send it to them.</div>`;
+    return;
+  }
 
   out.innerHTML = '<div class="card">Planning…</div>';
   clearOverlays();
@@ -743,7 +937,25 @@ async function plan() {
     const dest = await geocode(state.dest);
     const located = await Promise.all(state.people.map(async (p) => ({ ...p, pos: p.coords || await geocode(p.addr) })));
     const byId = Object.fromEntries(located.map((p) => [p.id, p]));
-    const { cars, unassigned, parked } = planCars(drivers.map((d) => byId[d.id]), riders.map((r) => byId[r.id]), dest, state.settings);
+
+    // Match on real drive times when we can, straight lines otherwise.
+    let matchedBy = 'straight-line distance';
+    if (state.settings.realDriveTimes) {
+      try {
+        const m = await driveTimeMatrix(located.map((p) => p.pos), dest);
+        if (m.cost) { travel = m.cost; matchedBy = 'real drive times'; } else matchedBy += ` (${m.reason})`;
+      } catch (e) {
+        console.warn('Drive times unavailable, matching by straight-line distance', e);
+        matchedBy += ` (Google drive times unavailable: ${e.message})`;
+      }
+    }
+    let result;
+    try {
+      result = planCars(drivers.map((d) => byId[d.id]), riders.map((r) => byId[r.id]), dest, state.settings);
+    } finally {
+      travel = haversine;
+    }
+    const { cars, unassigned, parked } = result;
     const parkedIds = new Set(parked.map((d) => d.id));
 
     // Arrival target: today at that time, or tomorrow if it's already passed.
@@ -775,7 +987,7 @@ async function plan() {
 
     const bounds = new google.maps.LatLngBounds(dest);
     addMarker(dest, '#111827', '★', state.dest);
-    let html = `<div class="card"><b>${cars.length} car${cars.length === 1 ? '' : 's'}</b> for ${state.people.length} people${parked.length ? ` · ${parked.length} driver${parked.length === 1 ? '' : 's'} riding along instead` : ''}</div>`;
+    let html = `<div class="card"><b>${cars.length} car${cars.length === 1 ? '' : 's'}</b> for ${state.people.length} people${parked.length ? ` · ${parked.length} driver${parked.length === 1 ? '' : 's'} riding along instead` : ''}<div class="hint">Matched by ${esc(matchedBy)}.</div></div>`;
     if (wsdot?.error) html += `<div class="card warn">Road alerts unavailable: ${esc(wsdot.error)}.</div>`;
     const alertPins = new Set();
 
@@ -864,3 +1076,4 @@ async function plan() {
 
 state = loadState();
 bindUI();
+unlockAddresses().then(() => { renderPeople(); saveState(); });
