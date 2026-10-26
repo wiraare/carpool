@@ -52,6 +52,26 @@
       </label>
       <label class="check"><input id="real-times" type="checkbox"> Match riders by real drive times</label>
       <p class="hint">Drivers who aren't needed ride with someone else instead. Change a driver's seats right in the list below. Real drive times avoid pairing people across water; turn off to match by straight-line distance.</p>
+
+      <div id="driver-box">
+        <h3>Driver list</h3>
+        <p class="hint">Tick who's driving this time and they're added to the trip. Untick to make them a rider. Saved only in this browser.</p>
+        <ul id="driver-list"></ul>
+        <div class="row">
+          <input id="d-name" placeholder="Driver name" autocomplete="off">
+          <input id="d-seats" type="number" min="1" max="8" value="3" title="Seats for riders (not counting the driver)">
+          <button type="button" id="d-add">Add</button>
+        </div>
+        <input id="d-addr" placeholder="Address (if they're not in Saved people)" autocomplete="off">
+        <input id="d-note" placeholder="Note (optional), like &quot;only from December&quot;" autocomplete="off">
+        <details>
+          <summary>Paste a driver list</summary>
+          <textarea id="d-import" rows="4" placeholder="One per line, like:&#10;Aldo → 5 people&#10;Daryl → 5 people (only from December)"></textarea>
+          <p class="hint">"5 people" means 5 including the driver, so 4 seats for riders.</p>
+          <button type="button" id="d-import-btn">Save drivers</button>
+        </details>
+        <p id="d-status" class="hint" hidden></p>
+      </div>
     </section>
 
     <section class="card">

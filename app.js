@@ -220,6 +220,7 @@ function renderPeople() {
       <button data-id="${p.id}" aria-label="Remove ${esc(p.name)}">✕</button>
     </li>`).join('') || '<li class="hint">No one added yet.</li>';
   renderPrivacy();
+  renderDrivers();
 }
 
 function renderPrivacy() {
@@ -353,6 +354,7 @@ function bindUI() {
   });
   $('locate').addEventListener('click', useMyLocation);
   bindSavedPeople();
+  bindDrivers();
 
   // with a key in config.js there's nothing to set up, so the key box stays hidden
   if (builtInKey) {
@@ -563,6 +565,140 @@ function attachNameLookup(input) {
     if (li) choose(items[+li.dataset.i]);
   });
   input.addEventListener('blur', close);
+}
+
+// --- driver list ---
+// the usual drivers with their seats and a note. tick someone to put them in
+// the trip as a driver, untick to make them a rider. only kept in this browser
+
+const DRIVERS_KEY = 'carpool-drivers';
+
+function loadDrivers() {
+  try { return JSON.parse(localStorage.getItem(DRIVERS_KEY)) || []; } catch { return []; }
+}
+
+function saveDrivers(list) {
+  try { localStorage.setItem(DRIVERS_KEY, JSON.stringify(list)); } catch {}
+  renderDrivers();
+}
+
+// their saved person (for the address). "Thad" finds "Thaddeus" too
+function driverContact(d) {
+  const all = loadContacts();
+  return all.find((c) => sameName(c.name, d.name))
+    || all.find((c) => c.name.toLowerCase().startsWith(d.name.trim().toLowerCase()));
+}
+
+// the trip entry for this driver, if they're in it
+const tripPersonFor = (d) => {
+  const c = driverContact(d);
+  return state.people.find((p) => sameName(p.name, d.name) || (c && sameName(p.name, c.name)));
+};
+
+function setDriving(d, on) {
+  const p = tripPersonFor(d);
+  if (on) {
+    if (p) Object.assign(p, { role: 'driver', seats: d.seats });
+    else {
+      const c = driverContact(d);
+      if (!c) return;
+      state.people.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: c.name, addr: c.addr, ...(c.coords ? { coords: c.coords } : {}), role: 'driver', seats: d.seats });
+    }
+  } else if (p) {
+    // they're probably still coming, just not driving
+    Object.assign(p, { role: 'rider', seats: 0 });
+  }
+  saveState();
+  renderPeople();
+}
+
+// "Daryl → 5 people (only from December)" -> Daryl, 4 rider seats, that note.
+// "5 people" counts the driver
+function parseDriverList(text) {
+  const out = [];
+  for (let line of text.split(/\r?\n/)) {
+    line = line.replace(/^\s*\d+\s*[.)]\s*/, '').trim();
+    const m = line.match(/^(.+?)\s*(?:→|->|=>|:)\s*(.*)$/);
+    if (!m || /^driver/i.test(m[1])) continue;
+    const people = m[2].match(/(\d+)\s*(?:people|ppl|seats?)/i);
+    const note = (m[2].match(/\((.*)\)/)?.[1] || '').trim();
+    out.push({ name: m[1].trim(), seats: people ? Math.max(1, +people[1] - 1) : state.settings.defaultSeats, note });
+  }
+  return out;
+}
+
+function renderDrivers() {
+  const list = loadDrivers();
+  $('driver-list').innerHTML = list.map((d, i) => {
+    const c = driverContact(d), p = tripPersonFor(d);
+    const driving = p?.role === 'driver';
+    return `
+    <li>
+      <input type="checkbox" data-drive="${i}" ${driving ? 'checked' : ''} ${c || p ? '' : 'disabled'} title="Driving this time">
+      <div class="who">
+        <b>${esc(d.name)}</b>${d.note ? `<div class="note" title="${esc(d.note)}">${esc(d.note)}</div>` : ''}
+        ${c || p ? `<div class="addr" title="${esc((c || p).addr)}">${esc((c || p).addr)}</div>` : '<div class="addr missing">No address yet. Add one below or in Saved people.</div>'}
+      </div>
+      <input class="seats" type="number" min="1" max="8" value="${d.seats}" data-dseats="${i}" title="Seats for riders">
+      <button type="button" data-dremove="${i}" aria-label="Remove ${esc(d.name)} from the driver list">✕</button>
+    </li>`;
+  }).join('') || '<li class="hint">No drivers saved yet.</li>';
+}
+
+function bindDrivers() {
+  $('d-seats').value = state.settings.defaultSeats;
+  renderDrivers();
+  const status = (text) => { $('d-status').hidden = false; $('d-status').textContent = text; };
+
+  $('d-add').addEventListener('click', () => {
+    const name = $('d-name').value.trim();
+    if (!name) { $('d-name').focus(); return; }
+    const d = { name, seats: clampInt($('d-seats').value, 1, 8, state.settings.defaultSeats), note: $('d-note').value.trim() };
+    const addr = $('d-addr').value.trim();
+    if (addr) rememberPerson({ name, addr, role: 'driver', seats: d.seats });
+    const list = loadDrivers();
+    const i = list.findIndex((x) => sameName(x.name, name));
+    if (i >= 0) list[i] = d; else list.push(d);
+    saveDrivers(list);
+    status(driverContact(d) ? `Saved ${name}.` : `Saved ${name}, but there's no address for them yet.`);
+    for (const id of ['d-name', 'd-addr', 'd-note']) $(id).value = '';
+    $('d-name').focus();
+  });
+
+  $('d-import-btn').addEventListener('click', () => {
+    const found = parseDriverList($('d-import').value);
+    if (!found.length) { status('Couldn\'t find any drivers. Put one per line, like "Aldo → 5 people".'); return; }
+    const list = loadDrivers();
+    for (const d of found) {
+      const i = list.findIndex((x) => sameName(x.name, d.name));
+      if (i >= 0) list[i] = d; else list.push(d);
+    }
+    saveDrivers(list);
+    const noAddr = found.filter((d) => !driverContact(d)).map((d) => d.name);
+    status(`Saved ${found.length} driver${found.length === 1 ? '' : 's'}.${noAddr.length ? ` No address yet for: ${noAddr.join(', ')}.` : ''}`);
+    $('d-import').value = '';
+  });
+
+  $('driver-list').addEventListener('change', (e) => {
+    const list = loadDrivers();
+    if (e.target.dataset.drive !== undefined) {
+      setDriving(list[+e.target.dataset.drive], e.target.checked);
+    } else if (e.target.dataset.dseats !== undefined) {
+      const d = list[+e.target.dataset.dseats];
+      d.seats = clampInt(e.target.value, 1, 8, d.seats);
+      saveDrivers(list);
+      // keep the trip in step if they're driving
+      const p = tripPersonFor(d);
+      if (p?.role === 'driver') { p.seats = d.seats; saveState(); renderPeople(); }
+    }
+  });
+
+  $('driver-list').addEventListener('click', (e) => {
+    if (e.target.dataset.dremove === undefined) return;
+    const list = loadDrivers();
+    list.splice(+e.target.dataset.dremove, 1);
+    saveDrivers(list);
+  });
 }
 
 function flash(btn, text) {
