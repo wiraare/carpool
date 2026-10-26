@@ -6,6 +6,6 @@
 //   because anyone who opens the app can see this key.
 // wsdotCode: free from https://wsdot.wa.gov/traffic/api/ (optional).
 window.CARPOOL_CONFIG = {
-  googleMapsKey: '',
+  googleMapsKey: 'AIzaSyA2B-ozIQ2C8RC9iyA2tTh0FeCxaI8_-8M',
   wsdotCode: '',
 };
