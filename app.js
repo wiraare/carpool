@@ -832,6 +832,15 @@ function flash(btn, text) {
 
 // --- google maps ---
 
+// google says "Requests from referer https://site/ are blocked" when the key
+// isn't allowed on the address the browser sent. some browsers (safari on
+// iphone) only send the site's main address, so the key needs that one.
+// turns it into exactly what to add
+function blockedHelp(msg) {
+  if (!/referer.*blocked|referer.*not allowed|API_KEY_HTTP_REFERRER_BLOCKED/i.test(msg)) return null;
+  return `Google blocked this because the API key isn't allowed on this website. In Google Cloud go to APIs & Services > Credentials > your key > Websites, add ${location.origin}/* and save. It works again in about 5 minutes.`;
+}
+
 // if the map can't load, bring the key box back just to show what went wrong
 function mapProblem(text) {
   $('key-section').hidden = false;
@@ -973,6 +982,9 @@ function attachAutocomplete(input) {
       } catch (e) {
         placesOff = true;
         close();
+        // blocked for this website? say so on the page, not just in the console
+        const help = blockedHelp(String(e?.message || e));
+        if (help) { $('google-note').hidden = false; $('google-note').textContent = 'Address suggestions are off. ' + help; }
         console.warn('Address suggestions are off. Enable "Places API (New)" on your key to turn them on.', e);
       }
     }, 300);
@@ -1068,7 +1080,7 @@ async function computeRoute(origin, destination, stops, departAt = null) {
   const data = await res.json();
   if (!res.ok) {
     const msg = data.error?.message || `Routes API error ${res.status}`;
-    if (res.status === 403) throw new Error(`Google refused the route request (${msg}). Check that Routes API is turned on for this key and that the key allows this website`);
+    if (res.status === 403) throw new Error(blockedHelp(msg) || `Google refused the route request (${msg}). Check that Routes API is turned on for this key`);
     throw new Error(msg);
   }
   if (!data.routes?.length) throw new Error('No driving route found');
@@ -1238,7 +1250,7 @@ async function driveTimeMatrix(points, dest) {
           body: JSON.stringify({ origins: oc.map(wp), destinations: dc.map(wp), travelMode: 'DRIVE', routingPreference: 'TRAFFIC_UNAWARE' }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error?.message || `Route Matrix error ${res.status}`);
+        if (!res.ok) { const msg = data.error?.message || `Route Matrix error ${res.status}`; throw new Error(blockedHelp(msg) || msg); }
         for (const el of data) {
           const o = oc[el.originIndex || 0], d = dc[el.destinationIndex || 0];
           // no road between them (island with no ferry or whatever), make it super expensive
