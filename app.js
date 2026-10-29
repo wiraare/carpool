@@ -324,6 +324,7 @@ function bindUI() {
     try {
       await navigator.clipboard.writeText(location.href);
       flash($('share'), 'Copied!');
+      window.logEvent?.('share', { people: state.people.length });
     } catch {
       prompt('Copy this link:', location.href);
     }
@@ -791,9 +792,11 @@ async function bindGroupList() {
       mergeGroup(await unlockGroup(file, pass), file, pass);
       $('group-pass').value = '';
       status('');
+      window.logEvent?.('group unlock', { ok: true });
       renderGroup(file);
     } catch {
       status('That passcode didn\'t work.');
+      window.logEvent?.('group unlock', { ok: false });
     }
   });
   $('group-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('group-unlock').click(); } });
@@ -837,6 +840,7 @@ function mapProblem(text) {
   $('key-section').hidden = false;
   if (builtInKey) { $('key-row').hidden = true; $('key-section').querySelector('.hint').hidden = true; }
   $('key-status').innerHTML = `<span class="error">${esc(text)}</span>`;
+  window.logEvent?.('error', { where: 'map', message: text });
 }
 
 function loadMaps(key) {
@@ -1436,9 +1440,12 @@ async function plan() {
 
     out.innerHTML = html;
     map.fitBounds(bounds, 40);
+    window.logEvent?.('plan', { people: state.people.length, cars: cars.length, noSeat: unassigned.length, matchedBy });
   } catch (err) {
     console.error(err);
     out.innerHTML = `<div class="card error">${esc(err.message || err)}</div>`;
+    // addresses show up in quotes in some errors, keep them out of the log
+    window.logEvent?.('error', { where: 'plan', message: String(err.message || err).replace(/"[^"]*"/g, '"…"').replace(/as far as [^)]*/, 'as far as …') });
   }
 }
 
