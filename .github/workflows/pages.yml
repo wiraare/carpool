@@ -1,0 +1,41 @@
+# builds the site with the google key from the repo secret and puts it on github pages.
+# only the files the site needs get published (not the readme or log-server)
+name: Deploy site
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Put the Google key in config.js
+        env:
+          KEY: ${{ secrets.GOOGLE_MAPS_KEY }}
+        run: |
+          test -n "$KEY" || { echo "The GOOGLE_MAPS_KEY secret is missing"; exit 1; }
+          mkdir _site
+          cp index.html app.js log.js style.css config.js people.enc.json _site/
+          sed -i "s|__GOOGLE_MAPS_KEY__|$KEY|" _site/config.js
+          grep -q "__GOOGLE_MAPS_KEY__" _site/config.js && { echo "Key didn't get filled in"; exit 1; } || true
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

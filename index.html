@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- send google the full page address so the locked key works -->
+  <meta name="referrer" content="no-referrer-when-downgrade">
+  <title>Carpool Planner</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside id="panel">
+    <header>
+      <h1>Carpool Planner</h1>
+      <p class="sub">Add a destination and everyone coming. Drivers get the riders that cost them the least detour.</p>
+    </header>
+
+    <!-- only shows up if there's no key in config.js (or the map can't load) -->
+    <section id="key-section" class="card" hidden>
+      <h2>Google Maps API key</h2>
+      <p class="hint">Needs <b>Maps JavaScript API</b>, <b>Geocoding API</b> and <b>Routes API</b> enabled. Add <b>Places API (New)</b> for address suggestions. Stored only in this browser.</p>
+      <div class="row" id="key-row">
+        <input id="api-key" type="password" placeholder="AIza..." autocomplete="off">
+        <button id="save-key">Load map</button>
+      </div>
+      <p id="key-status" class="hint"></p>
+      <p id="usage" class="hint"></p>
+    </section>
+
+    <section class="card">
+      <h2>Destination</h2>
+      <input id="dest" placeholder="e.g. 1600 Amphitheatre Pkwy, Mountain View, CA">
+      <label class="hint">Arrive by (optional)
+        <input id="arrive-by" type="time">
+      </label>
+    </section>
+
+    <section class="card">
+      <h2>Driver settings</h2>
+      <label class="hint">Default car capacity (free seats for new drivers)
+        <input id="default-seats" type="number" min="1" max="8" value="3">
+      </label>
+      <label class="hint">Number of cars to use
+        <select id="cars-mode">
+          <option value="all">Every driver drives</option>
+          <option value="fewest">As few cars as possible</option>
+          <option value="max">At most…</option>
+        </select>
+      </label>
+      <label id="max-cars-wrap" class="hint" hidden>Maximum cars
+        <input id="max-cars" type="number" min="1" value="2">
+      </label>
+      <label class="check"><input id="real-times" type="checkbox"> Match riders by real drive times</label>
+      <p class="hint">Drivers who aren't needed ride with someone else instead. Change a driver's seats right in the list below. Real drive times avoid pairing people across water; turn off to match by straight-line distance.</p>
+
+      <div id="driver-box">
+        <h3>Driver list</h3>
+        <p class="hint">Tick who's driving this time and they're added to the trip. Untick to make them a rider. Saved only in this browser.</p>
+        <ul id="driver-list"></ul>
+        <div class="row">
+          <input id="d-name" placeholder="Driver name" autocomplete="off">
+          <input id="d-seats" type="number" min="1" max="8" value="3" title="Seats for riders (not counting the driver)">
+          <button type="button" id="d-add">Add</button>
+        </div>
+        <input id="d-addr" placeholder="Address (if they're not in Saved people)" autocomplete="off">
+        <input id="d-note" placeholder="Note (optional), like &quot;only from December&quot;" autocomplete="off">
+        <details>
+          <summary>Paste a driver list</summary>
+          <textarea id="d-import" rows="4" placeholder="One per line, like:&#10;Aldo → 5 people&#10;Daryl → 5 people (only from December)"></textarea>
+          <p class="hint">"5 people" means 5 including the driver, so 4 seats for riders.</p>
+          <button type="button" id="d-import-btn">Save drivers</button>
+        </details>
+        <p id="d-status" class="hint" hidden></p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>People</h2>
+      <!-- the locked group list (people.enc.json). only shows if the site has one -->
+      <div id="group-box" hidden>
+        <div id="group-locked">
+          <p class="hint">Have the group passcode? Unlock it to search everyone's names and addresses.</p>
+          <div class="row">
+            <input id="group-pass" type="password" placeholder="Group passcode" autocomplete="off">
+            <button type="button" id="group-unlock">Unlock</button>
+          </div>
+        </div>
+        <p id="group-open" class="hint" hidden><span id="group-info"></span> <button type="button" id="group-forget" class="link">Lock again</button></p>
+        <p id="group-status" class="hint" hidden></p>
+      </div>
+      <form id="person-form">
+        <input id="p-name" placeholder="Name (type to find saved people)" required autocomplete="off">
+        <div class="row addr-row">
+          <input id="p-addr" placeholder="Starting address" required>
+          <button type="button" id="locate" title="Fill in where you are right now">Use my location</button>
+        </div>
+        <p id="locate-status" class="hint" hidden></p>
+        <div class="row">
+          <select id="p-role">
+            <option value="rider">Needs a ride</option>
+            <option value="driver">Driving</option>
+          </select>
+          <input id="p-seats" type="number" min="1" max="8" value="3" title="Free seats" hidden>
+          <button type="submit">Add</button>
+        </div>
+      </form>
+      <ul id="people"></ul>
+      <label class="check privacy"><input id="private" type="checkbox"> Keep home addresses private in share links</label>
+      <p id="privacy-note" class="hint"></p>
+      <details id="saved">
+        <summary>Saved people (<span id="saved-count">0</span>)</summary>
+        <p class="hint">Only saved in this browser. They're never in share links or on the website, so other people can't look them up.</p>
+        <textarea id="import-text" rows="5" placeholder="Paste a list, one per line, like:&#10;1. Jordan → 400 Broad St, Seattle&#10;2. Sam &amp; Alex → 123 Main St, Seattle"></textarea>
+        <label class="check"><input id="import-trip" type="checkbox"> Also add them to this trip (as riders)</label>
+        <div class="row">
+          <button type="button" id="import-btn">Save list</button>
+          <button type="button" id="forget-all" class="ghost">Forget everyone</button>
+        </div>
+        <p id="import-status" class="hint" hidden></p>
+        <ul id="saved-list"></ul>
+        <p class="hint">To share these people and your driver list with your drivers, make a locked group list file. It needs a passcode, and only people with the passcode can open it.</p>
+        <button type="button" id="group-export">Make group list file</button>
+      </details>
+    </section>
+
+    <section class="card actions">
+      <button id="plan" class="primary">Plan carpools</button>
+      <button id="share">Copy share link</button>
+      <button id="clear" class="ghost">Clear all</button>
+      <p class="hint">Share the link so others can add themselves, then have them send their link back to you. Opening it here adds them to your trip.</p>
+      <p class="hint">The site keeps a simple anonymous usage log (device type and which buttons get used, never names or addresses).</p>
+    </section>
+
+    <section id="results"></section>
+  </aside>
+
+  <main id="map"><div class="map-placeholder">Enter your API key to load the map.</div></main>
+
+  <script src="config.js"></script>
+  <script src="log.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

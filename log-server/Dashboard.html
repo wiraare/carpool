@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Carpool site log</title>
+  <style>
+    :root {
+      --bg: #f4f5f7; --card: #fff; --text: #1d2330; --muted: #6b7280; --border: #e3e5ea;
+      --accent: #2563eb; --accent-soft: #dbe6fd; --danger: #dc2626; --row: #f8fafc;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111318; --card: #1a1d24; --text: #e6e8ec; --muted: #9aa1ad; --border: #2c303a;
+        --accent: #6b9bff; --accent-soft: #24324f; --danger: #f87171; --row: #20242c;
+      }
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; padding: 20px 16px 40px; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    .wrap { max-width: 1100px; margin: 0 auto; }
+    header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 16px; }
+    h1 { margin: 0; font-size: 20px; flex: 1; min-width: 200px; }
+    h2 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+    .sub { color: var(--muted); font-size: 12px; }
+    button, select, input { font: inherit; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: inherit; }
+    button { cursor: pointer; }
+    button:hover { border-color: var(--accent); }
+    button.danger { color: var(--danger); }
+    a { color: var(--accent); }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 14px; }
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+    .tile { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+    .tile .n { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+    .tile .l { color: var(--muted); font-size: 12px; }
+    .grid2 { display: grid; grid-template-columns: 2fr 1fr; gap: 14px; }
+    @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+    .grid2 > .card { margin-bottom: 0; }
+    .row-gap { margin-bottom: 14px; }
+
+    .chart { display: flex; align-items: flex-end; gap: 3px; height: 150px; padding-top: 6px; }
+    .bar { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; position: relative; }
+    .bar .fill { background: var(--accent); border-radius: 3px 3px 0 0; min-height: 1px; }
+    .bar .fill.zero { background: var(--border); }
+    .bar:hover .fill { opacity: .75; }
+    .bar .tip { display: none; position: absolute; bottom: calc(100% + 4px); left: 50%; transform: translateX(-50%); white-space: nowrap;
+      background: var(--text); color: var(--bg); font-size: 11px; padding: 3px 6px; border-radius: 4px; z-index: 2; }
+    .bar:hover .tip { display: block; }
+    .axis { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; margin-top: 4px; }
+
+    .split { margin-bottom: 10px; }
+    .split .name { display: flex; justify-content: space-between; font-size: 13px; }
+    .split .track { height: 6px; background: var(--accent-soft); border-radius: 3px; margin-top: 3px; }
+    .split .track div { height: 100%; background: var(--accent); border-radius: 3px; }
+
+    .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+    .filters input { flex: 1; min-width: 160px; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    tr:nth-child(even) td { background: var(--row); }
+    td.when { white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .pill { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
+    .pill.error { background: #fde2e2; color: #b91c1c; }
+    @media (prefers-color-scheme: dark) { .pill.error { background: #4a1f22; color: #fca5a5; } }
+    button.vid { border: 0; padding: 0; background: none; color: var(--accent); font-family: ui-monospace, Consolas, monospace; font-size: 12px; text-decoration: underline; }
+    .det { color: var(--muted); font-size: 12px; }
+    .empty { color: var(--muted); padding: 20px 0; text-align: center; }
+    .more { margin-top: 10px; text-align: center; }
+    #status.error { color: var(--danger); }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Carpool site log <div class="sub" id="status">Loading…</div></h1>
+    <button id="refresh">Refresh</button>
+    <a id="sheet" target="_blank" rel="noopener" hidden>Open the sheet</a>
+    <button id="clear" class="danger">Clear log</button>
+  </header>
+
+  <div class="tiles" id="tiles"></div>
+
+  <div class="grid2 row-gap">
+    <section class="card">
+      <h2>People per day (last 30 days)</h2>
+      <div class="chart" id="chart"></div>
+      <div class="axis" id="axis"></div>
+    </section>
+    <section class="card">
+      <h2>Devices (last 30 days)</h2>
+      <div id="devices"></div>
+      <h2 style="margin-top:14px">Browsers</h2>
+      <div id="browsers"></div>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Everything that happened</h2>
+    <div class="filters">
+      <select id="f-event"><option value="">All events</option></select>
+      <select id="f-range">
+        <option value="1">Today</option>
+        <option value="7">Last 7 days</option>
+        <option value="30" selected>Last 30 days</option>
+        <option value="0">All time</option>
+      </select>
+      <input id="f-search" placeholder="Search (visitor id, device, error text…)">
+      <button id="f-reset" hidden>Show everyone</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>When</th><th>Visitor</th><th>Event</th><th>Device</th><th>Details</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="empty" hidden>Nothing yet.</div>
+    <div class="more"><button id="more" hidden>Show more</button></div>
+  </section>
+  <p class="sub">Each visitor id is a random code saved in that person's browser, so the same id means the same phone or computer. No names or addresses are logged.</p>
+</div>
+
+<script>
+const COLS = ['time', 'visitor', 'session', 'event', 'device', 'browser', 'os', 'lang', 'screen', 'tz', 'referrer', 'details'];
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const DAY = 86400000;
+let all = [];
+let shown = 100;
+let onlyVisitor = '';
+
+const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const startOfDay = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return +d; };
+
+// works inside apps script, and with made-up data when opened as a plain file
+function call(fn, ...args) {
+  if (window.google?.script?.run) {
+    return new Promise((ok, fail) => google.script.run.withSuccessHandler(ok).withFailureHandler(fail)[fn](...args));
+  }
+  return Promise.resolve(fn === 'getLog' ? sampleLog() : true);
+}
+
+async function load() {
+  $('status').className = 'sub';
+  $('status').textContent = 'Loading…';
+  try {
+    const res = await call('getLog');
+    all = res.rows.map((r) => {
+      const o = Object.fromEntries(COLS.map((c, i) => [c, r[i]]));
+      o.t = +new Date(o.time);
+      try { o.d = JSON.parse(o.details || '{}'); } catch { o.d = {}; }
+      return o;
+    }).filter((o) => !isNaN(o.t)).sort((a, b) => b.t - a.t);
+    if (res.sheetUrl) { $('sheet').href = res.sheetUrl; $('sheet').hidden = false; }
+    const extra = res.total > res.rows.length ? ` (showing the newest ${res.rows.length.toLocaleString()} of ${res.total.toLocaleString()})` : '';
+    $('status').textContent = `${all.length.toLocaleString()} events${extra} · updated ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+    fillEventFilter();
+    render();
+  } catch (e) {
+    $('status').className = 'sub error';
+    $('status').textContent = 'Couldn\'t load the log: ' + (e.message || e);
+  }
+}
+
+function fillEventFilter() {
+  const sel = $('f-event');
+  const keep = sel.value;
+  const kinds = [...new Set(all.map((o) => o.event))].sort();
+  sel.innerHTML = '<option value="">All events</option>' + kinds.map((k) => `<option>${esc(k)}</option>`).join('');
+  if (kinds.includes(keep)) sel.value = keep;
+}
+
+function render() {
+  const now = Date.now();
+  const today = startOfDay(now);
+  const since = (days) => all.filter((o) => o.t >= today - (days - 1) * DAY);
+  const people = (list) => new Set(list.map((o) => o.visitor)).size;
+  const count = (list, ev) => list.filter((o) => o.event === ev).length;
+
+  const d1 = since(1), d7 = since(7), d30 = since(30);
+  // someone is "new" if their first visit ever is in the last 7 days
+  const firstSeen = {};
+  all.forEach((o) => { firstSeen[o.visitor] = Math.min(firstSeen[o.visitor] ?? Infinity, o.t); });
+  const newPeople = Object.values(firstSeen).filter((t) => t >= today - 6 * DAY).length;
+
+  const tiles = [
+    [people(d1), 'people today'],
+    [people(d7), 'people this week'],
+    [newPeople, 'new this week'],
+    [count(d7, 'visit'), 'visits this week'],
+    [count(d7, 'plan'), 'carpools planned this week'],
+    [count(d7, 'share'), 'links shared this week'],
+    [count(d7, 'error'), 'errors this week'],
+  ];
+  $('tiles').innerHTML = tiles.map(([n, l]) => `<div class="tile"><div class="n">${n.toLocaleString()}</div><div class="l">${l}</div></div>`).join('');
+
+  // people per day
+  const days = [];
+  for (let i = 29; i >= 0; i--) days.push(today - i * DAY);
+  const perDay = days.map((t) => {
+    const list = all.filter((o) => o.t >= t && o.t < t + DAY);
+    return { t, people: people(list), visits: count(list, 'visit') };
+  });
+  const top = Math.max(1, ...perDay.map((d) => d.people));
+  $('chart').innerHTML = perDay.map((d) => {
+    const label = new Date(d.t).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+    return `<div class="bar"><div class="tip">${esc(label)}: ${d.people} ${d.people === 1 ? 'person' : 'people'}, ${d.visits} visits</div><div class="fill${d.people ? '' : ' zero'}" style="height:${(d.people / top) * 100}%"></div></div>`;
+  }).join('');
+  const short = (t) => new Date(t).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  $('axis').innerHTML = `<span>${short(days[0])}</span><span>${short(days[15])}</span><span>Today</span>`;
+
+  // devices + browsers, counted per person not per click
+  const split = (key) => {
+    const byPerson = {};
+    d30.forEach((o) => { byPerson[o.visitor] = key === 'device' ? o.device : `${o.browser} on ${o.os}`; });
+    const tally = {};
+    Object.values(byPerson).forEach((v) => { tally[v] = (tally[v] || 0) + 1; });
+    const total = Object.values(byPerson).length || 1;
+    const list = Object.entries(tally).sort((a, b) => b[1] - a[1]).slice(0, 6);
+    if (!list.length) return '<div class="sub">Nothing yet.</div>';
+    return list.map(([name, n]) => `<div class="split"><div class="name"><span>${esc(name)}</span><span>${n}</span></div><div class="track"><div style="width:${(n / total) * 100}%"></div></div></div>`).join('');
+  };
+  $('devices').innerHTML = split('device');
+  $('browsers').innerHTML = split('browser');
+
+  renderRows();
+}
+
+function describe(o) {
+  const d = o.d || {};
+  switch (o.event) {
+    case 'visit': return d.fromShareLink ? 'Opened a share link' : 'Opened the site';
+    case 'plan': return `Planned ${d.people} people into ${d.cars} ${d.cars === 1 ? 'car' : 'cars'}${d.noSeat ? `, ${d.noSeat} without a seat` : ''}${d.matchedBy ? ` (by ${d.matchedBy})` : ''}`;
+    case 'share': return `Copied a share link (${d.people} people in the trip)`;
+    case 'group unlock': return d.ok ? 'Unlocked the group list' : 'Tried a wrong group passcode';
+    case 'error': return `${d.where === 'map' ? 'Map' : 'Planning'} error: ${d.message || ''}`;
+    default: return o.details && o.details !== '{}' ? o.details : '';
+  }
+}
+
+function filtered() {
+  const ev = $('f-event').value;
+  const days = +$('f-range').value;
+  const q = $('f-search').value.trim().toLowerCase();
+  const from = days ? startOfDay(Date.now()) - (days - 1) * DAY : 0;
+  return all.filter((o) => o.t >= from
+    && (!ev || o.event === ev)
+    && (!onlyVisitor || o.visitor === onlyVisitor)
+    && (!q || [o.visitor, o.event, o.device, o.browser, o.os, o.lang, o.tz, o.referrer, o.screen, describe(o)].join(' ').toLowerCase().includes(q)));
+}
+
+function renderRows() {
+  const list = filtered();
+  $('f-reset').hidden = !onlyVisitor;
+  $('f-reset').textContent = onlyVisitor ? `Showing only ${onlyVisitor} · show everyone` : '';
+  $('empty').hidden = list.length > 0;
+  $('more').hidden = list.length <= shown;
+  const when = (t) => {
+    const d = new Date(t);
+    const sameDay = startOfDay(t) === startOfDay(Date.now());
+    return sameDay ? `Today ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+      : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  };
+  $('rows').innerHTML = list.slice(0, shown).map((o) => {
+    const extra = [o.lang, o.tz, o.referrer && `from ${o.referrer}`].filter(Boolean).join(' · ');
+    return `<tr>
+      <td class="when">${esc(when(o.t))}</td>
+      <td><button class="vid" data-v="${esc(o.visitor)}" title="Show only this visitor">${esc(o.visitor)}</button></td>
+      <td><span class="pill${o.event === 'error' ? ' error' : ''}">${esc(o.event)}</span></td>
+      <td>${esc(o.device)}<div class="det">${esc(o.browser)} on ${esc(o.os)} · ${esc(o.screen)}</div></td>
+      <td>${esc(describe(o))}${extra ? `<div class="det">${esc(extra)}</div>` : ''}</td>
+    </tr>`;
+  }).join('');
+}
+
+$('rows').addEventListener('click', (e) => {
+  const b = e.target.closest('.vid');
+  if (!b) return;
+  onlyVisitor = b.dataset.v;
+  shown = 100;
+  renderRows();
+});
+$('f-reset').addEventListener('click', () => { onlyVisitor = ''; renderRows(); });
+['f-event', 'f-range'].forEach((id) => $(id).addEventListener('change', () => { shown = 100; renderRows(); }));
+$('f-search').addEventListener('input', () => { shown = 100; renderRows(); });
+$('more').addEventListener('click', () => { shown += 200; renderRows(); });
+$('refresh').addEventListener('click', load);
+$('clear').addEventListener('click', async () => {
+  if (!confirm('Delete every row in the log? This can\'t be undone.')) return;
+  try { await call('clearLog'); load(); } catch (e) { alert('Couldn\'t clear it: ' + (e.message || e)); }
+});
+// keep it fresh while it's open
+setInterval(() => { if (!document.hidden) load(); }, 5 * 60000);
+load();
+
+// made-up data, only used when this file is opened outside apps script
+function sampleLog() {
+  const devs = [['phone', 'Safari', 'iOS', '390x844'], ['phone', 'Chrome', 'Android', '412x915'], ['computer', 'Chrome', 'Windows', '1920x1080'], ['computer', 'Safari', 'Mac', '1512x982'], ['tablet', 'Safari', 'iOS', '820x1180']];
+  const visitors = Array.from({ length: 14 }, (_, i) => ({ id: Math.random().toString(16).slice(2, 10), dev: devs[i % devs.length], first: Math.random() * 30 }));
+  const rows = [];
+  const now = Date.now();
+  visitors.forEach((v) => {
+    const visits = 1 + Math.floor(Math.random() * 6);
+    for (let k = 0; k < visits; k++) {
+      const t = now - Math.random() * v.first * DAY;
+      const s = Math.random().toString(16).slice(2, 10);
+      const base = (ev, dt, d) => [new Date(t + dt).toISOString(), v.id, s, ev, ...v.dev.slice(0, 3), 'en-US', v.dev[3], 'America/Los_Angeles', k ? '' : 'l.instagram.com', JSON.stringify(d)];
+      rows.push(base('visit', 0, { fromShareLink: Math.random() < .3 }));
+      if (Math.random() < .3) rows.push(base('group unlock', 20000, { ok: Math.random() < .8 }));
+      if (Math.random() < .5) rows.push(base('plan', 60000, { people: 10 + Math.floor(Math.random() * 19), cars: 3 + Math.floor(Math.random() * 2), noSeat: Math.floor(Math.random() * 4), matchedBy: 'real drive times' }));
+      if (Math.random() < .25) rows.push(base('share', 90000, { people: 12 }));
+      if (Math.random() < .08) rows.push(base('error', 70000, { where: 'plan', message: 'Couldn\'t find "…"' }));
+    }
+  });
+  return { rows: rows.filter((r) => new Date(r[0]) <= now).sort((a, b) => a[0] < b[0] ? -1 : 1), sheetUrl: '', total: rows.length };
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+Start Carpool.bat
+# never commit keys or local-only files
+*.local.js
+.env*
+key.txt
